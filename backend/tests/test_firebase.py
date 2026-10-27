@@ -1,5 +1,6 @@
 """Google sign-in (Firebase Auth) and the Realtime Database cloud copy of each chat."""
 import base64
+import copy
 import json
 import pytest
 from app.config import Settings
@@ -184,7 +185,7 @@ def test_a_personal_workspace_with_an_admin_is_private_to_it(tmp_path):
 
 
 class FakeDatabase:
-    """Applies multi-path updates to a dict like the Realtime Database; fails every write while .down is set."""
+    """Applies multi-path updates to a dict like the Realtime Database; fails every read and write while .down is set."""
     def __init__(self): self.data, self.updates, self.down = {}, [], False
 
     def update(self, value):
@@ -194,7 +195,24 @@ class FakeDatabase:
             *parents, last = path.split('/')
             here = self.data
             for part in parents: here = here.setdefault(part, {})
-            here[last] = node
+            if node is None: here.pop(last, None)
+            else: here[last] = copy.deepcopy(node)
+
+    def child(self, path): return FakeReference(self, path)
+
+
+class FakeReference:
+    def __init__(self, database, path): self.database, self.path = database, path
+
+    def get(self, shallow=False):
+        if self.database.down: raise RuntimeError('Realtime Database unavailable')
+        here = self.database.data
+        for part in self.path.split('/'):
+            if not isinstance(here, dict) or part not in here: return None
+            here = here[part]
+        if shallow and isinstance(here, dict): return {k: True for k in here}
+        # Like the real database, a read never hands out the stored objects themselves.
+        return copy.deepcopy(here)
 
 
 @pytest.mark.asyncio
@@ -247,3 +265,91 @@ def test_chats_whose_copy_never_arrived_are_sent_when_the_server_starts(tmp_path
     assert database.data['users']['a']['chats'][mine]['synced_on'] == 'startup'
     assert restarted.state.db.require_task(mine)['cloud_synced_at']
     assert 'workspace' not in database.data and restarted.state.db.require_task(unclaimed)['cloud_synced_at'] is None
+
+
+def _signed_in(app, uid):
+    client = app.test_client()
+    assert client.post('/api/auth/session', json={'id_token': f'google-token-for-account-{uid}'}).status_code == 200
+    return client
+
+
+def test_a_fresh_server_loads_back_an_accounts_chats_and_memories(tmp_path):
+    database = FakeDatabase()
+    first = signed_in_app(tmp_path / 'first', required=False, database=database)
+    ada = as_account(first, 'a')
+    project = ada.post('/api/projects', json={'name': 'Gripper'}).json
+    task = ada.post('/api/tasks', json={'prompt': 'Design a tomato gripper', 'project_id': project['id']}).json['id']
+    db = first.state.db
+    run = db.one('SELECT id FROM runs WHERE task_id=?', (task,))['id']
+    with db.transaction() as c:
+        c.execute("INSERT INTO tool_calls VALUES('call-1',?,?,'cad','{\"a.b\":1}',NULL,'running',1,NULL)", (task, run))
+        c.execute("INSERT INTO memories VALUES('mem-1',?,?,'\"Iris closes evenly\"',2)", (task, project['id']))
+    first.state.cloud.push(task, 'started').result()
+    first.state.cloud.close()
+    assert database.data['users']['a']['memories'][task]['mem-1']['content'] == 'Iris closes evenly'
+
+    fresh = signed_in_app(tmp_path / 'fresh', required=False, database=database)
+    _signed_in(fresh, 'a')
+    fresh.state.cloud.close()
+    detail = as_account(fresh, 'a').get(f'/api/tasks/{task}').json
+    assert detail['owner'] == 'a' and detail['title'] == 'Design a tomato gripper' and detail['project_id'] == project['id']
+    assert [m['content'] for m in detail['messages']] == ['Design a tomato gripper']
+    # Nothing restored is left running: its worker went with the old server.
+    assert detail['status'] == 'interrupted' and [r['status'] for r in detail['runs']] == ['interrupted']
+    call = fresh.state.db.one('SELECT * FROM tool_calls WHERE id=?', ('call-1',))
+    assert call['status'] == 'interrupted' and call['arguments'] == {'a.b': 1}
+    assert [m['content'] for m in fresh.state.db.all('SELECT content FROM memories')] == ['Iris closes evenly']
+    assert fresh.state.db.one('SELECT name FROM projects WHERE id=?', (project['id'],))['name'] == 'Gripper'
+    assert fresh.state.db.claim() is None
+    # Another account gets none of it.
+    assert as_account(fresh, 'b').get(f'/api/tasks/{task}').status_code == 404
+
+
+def test_restore_only_adds_what_is_missing(tmp_path):
+    database = FakeDatabase()
+    app = signed_in_app(tmp_path, required=False, database=database)
+    task = as_account(app, 'a').post('/api/tasks', json={'prompt': 'Kept as it is here'}).json['id']
+    app.state.cloud.push(task, 'started').result()
+    database.data['users']['a']['chats'][task]['title'] = 'Older title in the copy'
+    assert app.state.cloud.restore('a').result() == 0
+    assert app.state.db.require_task(task)['title'] == 'Kept as it is here'
+    app.state.cloud.close()
+
+
+def test_the_admins_rules_follow_it_to_a_fresh_server(tmp_path):
+    database = FakeDatabase()
+    first = signed_in_app(tmp_path / 'first', database=database, owner_email='a@example.com')
+    ada = _signed_in(first, 'a')
+    rule = ada.post('/api/rules', json={'content': 'Walls at least 1.2 mm'}).json
+    gone = ada.post('/api/rules', json={'content': 'Forget me'}).json
+    ada.delete(f"/api/rules/{gone['id']}")
+    first.state.cloud.close()
+    assert [r['content'] for r in database.data['users']['a']['rules'].values()] == ['Walls at least 1.2 mm']
+
+    # A fresh server loads them on start, before anyone signs in.
+    fresh = signed_in_app(tmp_path / 'fresh', database=database, owner_email='a@example.com')
+    fresh.state.cloud.close()
+    assert [(r['id'], r['content']) for r in fresh.state.db.all('SELECT id,content FROM rules')] == [(rule['id'], 'Walls at least 1.2 mm')]
+
+
+def test_a_non_admin_never_touches_the_rules_copy(tmp_path):
+    database = FakeDatabase()
+    database.data = {'users': {'b': {'rules': {'r1': {'id': 'r1', 'content': 'Not the workspace rules'}}}}}
+    # Hosted, so other accounts can sign in; only the admin's account carries the rules.
+    app = signed_in_app(tmp_path, database=database, hosted=True, owner_email='a@example.com')
+    _signed_in(app, 'b')
+    app.state.cloud.close()
+    assert app.state.db.all('SELECT * FROM rules') == []
+    assert database.data['users']['b']['rules'] == {'r1': {'id': 'r1', 'content': 'Not the workspace rules'}}
+
+
+def test_rules_are_not_overwritten_when_the_copy_cannot_be_read(tmp_path):
+    database = FakeDatabase()
+    database.data = {'users': {'a': {'rules': {'r1': {'id': 'r1', 'content': 'Keep me'}}}}}
+    database.down = True
+    app = signed_in_app(tmp_path, database=database, owner_email='a@example.com')
+    ada = _signed_in(app, 'a')
+    ada.post('/api/rules', json={'content': 'Made while the database was down'})
+    database.down = False
+    app.state.cloud.close()
+    assert database.data['users']['a']['rules'] == {'r1': {'id': 'r1', 'content': 'Keep me'}}

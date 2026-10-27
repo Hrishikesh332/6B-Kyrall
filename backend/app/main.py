@@ -1,5 +1,5 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 import hashlib
 import hmac
 import json
@@ -98,8 +98,10 @@ def create_app(settings=None,provider=None,firebase=None):
     runner=ToolRunner(db,store,settings)
     engine=Engine(db,runner,settings,provider)
     firebase=firebase or Firebase(settings)
-    # Each chat's Firestore copy is pushed when a run starts and when it stops.
+    # Each chat's Realtime Database copy is pushed when a run starts and when it stops.
     cloud=engine.cloud=CloudSync(db,firebase.database())
+    # A fresh server (new deploy, lost volume) first loads back the chats and rules it is missing.
+    cloud.restore_all(settings.owner_email if firebase.sign_in else None,workspace_rules=not firebase.sign_in)
     # Chats whose copy never arrived (the database was missing or offline) are sent again on start.
     # With sign-in on, chats nobody owns yet wait for their owner's sign-in instead.
     for row in db.all('SELECT id FROM tasks WHERE cloud_synced_at IS NULL'+(' AND owner IS NOT NULL' if firebase.sign_in else '')+' ORDER BY created_at') if cloud.pool else ():
@@ -254,6 +256,12 @@ def create_app(settings=None,provider=None,firebase=None):
                 c.execute('UPDATE tasks SET owner=?,cloud_synced_at=NULL WHERE owner IS NULL',(user['uid'],))
                 for table in ('projects','schedules'): c.execute(f'UPDATE {table} SET owner=? WHERE owner IS NULL',(user['uid'],))
         cloud.save_user(user)
+        # Load back this account's chats (and the rules, for the account that may edit them) before
+        # the browser lists them; a slow database only delays sign-in, never fails it.
+        edits_rules=not settings.owner_email or is_admin(user)
+        restoring=cloud.restore(user['uid'],rules=edits_rules)
+        if restoring: wait([restoring],timeout=20)
+        if edits_rules: cloud.push_rules(user['uid'])
         # Every chat of this account not yet in the cloud, including ones it just took.
         for row in db.all('SELECT id FROM tasks WHERE owner=? AND cloud_synced_at IS NULL ORDER BY created_at',(user['uid'],)):
             cloud.push(row['id'],'sign-in')
@@ -738,12 +746,20 @@ def create_app(settings=None,provider=None,firebase=None):
     def revise_memory(memory_id:str,data:MemoryInput):
         with db.transaction() as c:
             if not c.execute('UPDATE memories SET content=? WHERE id=?',(encode(data.content.strip()),memory_id)).rowcount: raise NotFound('Memory not found')
+        memory_changed(memory_id)
         return db.one('SELECT m.id,m.task_id,m.content,m.created_at,t.title FROM memories m LEFT JOIN tasks t ON t.id=m.task_id WHERE m.id=?',(memory_id,))
 
     @app.delete('/api/memories/{memory_id}')
     def forget(memory_id:str):
+        task_id=(db.one('SELECT task_id FROM memories WHERE id=?',(memory_id,)) or {}).get('task_id')
         with db.transaction() as c: c.execute('DELETE FROM memories WHERE id=?',(memory_id,))
+        if task_id: cloud.push(task_id,'memory')
         return {'deleted':True}
+
+    def memory_changed(memory_id):
+        # A chat's memories travel with its cloud copy.
+        task_id=(db.one('SELECT task_id FROM memories WHERE id=?',(memory_id,)) or {}).get('task_id')
+        if task_id: cloud.push(task_id,'memory')
 
     @app.get('/api/schedules')
     def schedules():
@@ -796,6 +812,7 @@ def create_app(settings=None,provider=None,firebase=None):
             # One applies-when description per set: the newest wording updates the whole set.
             if data.rule_set.strip() and data.applies_when.strip():
                 c.execute('UPDATE rules SET applies_when=? WHERE rule_set=?',(data.applies_when.strip(),data.rule_set.strip()))
+        cloud.push_rules(account())
         return db.one('SELECT r.*,p.name AS project_name FROM rules r LEFT JOIN projects p ON p.id=r.project_id WHERE r.id=?',(rid,))
 
     @app.patch('/api/rules/{rule_id}')
@@ -810,6 +827,7 @@ def create_app(settings=None,provider=None,firebase=None):
             if data.applies_when is not None:
                 current=db.one('SELECT rule_set FROM rules WHERE id=?',(rule_id,))['rule_set']
                 c.execute('UPDATE rules SET applies_when=? WHERE id=? OR (rule_set!=\'\' AND rule_set=?)',(data.applies_when.strip(),rule_id,current))
+        cloud.push_rules(account())
         return db.one('SELECT r.*,p.name AS project_name FROM rules r LEFT JOIN projects p ON p.id=r.project_id WHERE r.id=?',(rule_id,))
 
     def bambu_state():
@@ -868,7 +886,9 @@ def create_app(settings=None,provider=None,firebase=None):
         admin_only('workspace rules')
         from .rules import add_template
         if project_id and not db.one('SELECT 1 FROM projects WHERE id=?',(project_id,)): raise NotFound('Project not found')
-        return add_template(db,template_id,project_id or None)
+        added=add_template(db,template_id,project_id or None)
+        cloud.push_rules(account())
+        return added
 
     @app.get('/api/tasks/{task_id}/rules')
     def task_rule_sets(task_id:str):
@@ -886,6 +906,7 @@ def create_app(settings=None,provider=None,firebase=None):
     def delete_rule(rule_id:str):
         admin_only('workspace rules')
         with db.transaction() as c: c.execute('DELETE FROM rules WHERE id=?',(rule_id,))
+        cloud.push_rules(account())
         return {'deleted':True}
 
     if settings.frontend_dir.is_dir():
