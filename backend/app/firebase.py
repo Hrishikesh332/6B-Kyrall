@@ -6,15 +6,19 @@ chat when a run starts and again when it stops, written on one background thread
 slows or fails a run. A server whose SQLite lacks a chat (a fresh deploy, a lost volume) loads
 it back from the copy on start and when its owner signs in, together with the workspace rules.
 
-Realtime Database layout, flat so that listing chats never downloads their messages:
+Realtime Database layout, flat so that listing chats never downloads their messages. Rows are
+the exact SQLite row as JSON text (exact()), so a restored chat is identical to the one copied:
   users/{uid}/profile                        email, name, picture, last_sign_in_at
-  users/{uid}/chats/{task_id}                title, status, project, spec, plan, counts, synced_at
-  users/{uid}/messages/{task_id}/{id}        role, kind, content, created_at
-  users/{uid}/runs/{task_id}/{run_id}        status, error, usage, timings
-  users/{uid}/files/{task_id}/{artifact_id}  name, version, size, sha256, metadata (not the bytes)
-  users/{uid}/tool_calls/{task_id}/{id}      name, arguments, result, status, timings
-  users/{uid}/memories/{task_id}/{id}        the chat's memories: content, project, created_at
+  users/{uid}/chats/{task_id}                title, status, project, counts, synced_at; row (the task), format
+  users/{uid}/projects/{project_id}          the chat's project
+  users/{uid}/{table}/{task_id}/{key}        the chat's runs, messages, events, questionnaires, approvals,
+                                             files (artifact rows), tool_calls, memories, rule_checks, rule_sets
+  users/{uid}/blobs/{task_id}/{artifact_id}  a file's bytes in base64 pieces c0, c1, ... of CHUNK bytes each
+  users/{uid}/stored/{task_id}/{artifact_id} how many pieces the file has, written once they all are
+  users/{uid}/logs/{task_id}/{run_id}        a run's raw provider log (sessions/), in pieces like a file
+  users/{uid}/logged/{task_id}/{run_id}      its pieces, size and sha256, written once they all are
   users/{uid}/rules/{id}                     the workspace rules, as the account that may edit them left them
+Chats copied before format 2 hold readable rows instead (long text cut); they still restore, as before.
 Chats made while nobody is signed in go under workspace/ in the same shape. Times are Unix
 seconds; synced_at is the database server's clock in milliseconds.
 """
@@ -22,8 +26,11 @@ import base64
 import binascii
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+import hashlib
 import json
 import logging
+from pathlib import Path
+import re
 import time
 import uuid
 from .db import JSON_COLUMNS, encode
@@ -42,9 +49,26 @@ SYNC_MARGIN = 5
 # One update stays well under the database's 16 MB write limit; one JSON field is cut at this size.
 MAX_WRITE = 4_000_000
 MAX_FIELD = 200_000
+# A file's bytes go up in pieces this large, far under the database's 10 MB string limit.
+CHUNK = 1_000_000
+# What ArtifactStore accepts; a restored file is written only under a name and id like these.
+FILE_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,149}')
+FILE_ID = re.compile(r'[A-Za-z0-9_-]{1,64}')
 SERVER_TIME = {'.sv': 'timestamp'}
+# 2: every row is copied exactly, with the chat's events, questions, approvals and rule decisions, and
+# the bytes of its files and raw provider logs. A chat whose copy is older is sent whole on start.
+FORMAT = 2
+# The chat's tables in the copy: node, SQLite table, key column, and for rows that never change once
+# written, what says when (so a push sends only the new ones); None sends them all every time.
+CHAT_TABLES = (('runs', 'runs', 'id', None), ('messages', 'messages', 'id', 'created_at'),
+               ('events', 'events', 'seq', 'created_at'), ('questionnaires', 'questionnaires', 'id', None),
+               ('approvals', 'approvals', 'id', None), ('files', 'artifacts', 'id', 'created_at'),
+               ('tool_calls', 'tool_calls', 'id', 'COALESCE(finished_at,started_at)'),
+               ('rule_checks', 'rule_checks', 'id', None), ('rule_sets', 'task_rule_sets', 'rule_set', None))
 # A restored run cannot still be going: its worker went with the old server.
 ACTIVE = ('queued', 'running', 'awaiting_input')
+# Exact copies keep a run that waits for an answer or approval: it has no worker to lose.
+RUNNING = ('queued', 'running')
 RESTORED = 'The server restarted without this run; restored from the cloud copy. Retry to continue.'
 RULE_COLUMNS = ('id', 'content', 'project_id', 'enabled', 'created_at', 'rule_set', 'applies_when', 'level', 'source')
 
@@ -184,6 +208,27 @@ def as_json(value, default):
     return encode(default if value is None else value)
 
 
+def exact(row):
+    """A SQLite row as JSON text with every value as stored, which a restore writes back unchanged."""
+    return json.dumps(row, separators=(',', ':'), ensure_ascii=False)
+
+
+def pieces(path, data):
+    """(path/c0, base64), (path/c1, ...): data in CHUNK-byte pieces."""
+    return ((f'{path}/c{i // CHUNK}', base64.b64encode(data[i:i + CHUNK]).decode()) for i in range(0, len(data), CHUNK))
+
+
+def values(node):
+    """A node's children. The database hands back children keyed 0, 1, 2 ... (event numbers) as a list."""
+    if isinstance(node, dict):
+        return list(node.values())
+    return [v for v in node if v is not None] if isinstance(node, list) else []
+
+
+def joined(parts, count):
+    return b''.join(base64.b64decode(parts[f'c{i}']) for i in range(count))
+
+
 def document(row):
     """One SQLite row as a database node: long text shortened, keys made valid."""
     row = _plain(row)
@@ -199,22 +244,35 @@ class CloudSync:
     the chats and rules this server's SQLite is missing.
 
     Work runs one at a time on a background thread, in the order it was asked for: each push reads
-    the chat then writes it as one multi-path update. Only rows added or finished since the chat's
-    last successful push (tasks.cloud_synced_at) are written; a failed push leaves them for the next.
-    Restores only ever add what is missing locally, so they never overwrite newer work here.
+    the chat then writes it as multi-path updates. Rows are copied exactly (exact()), so a restored
+    chat is the same row for row. Rows that can still change are sent on every push; the others only
+    when added or finished since the chat's last successful push (tasks.cloud_synced_at), so a failed
+    push leaves them for the next. With the data folder given, the bytes of the chat's files and its
+    raw provider logs are copied too, each listed under stored/ or logged/ once all its pieces are in.
+    Restores add what is missing here and bring rows up to the copy, but never touch a chat changed
+    here after its copy was made.
     """
 
-    def __init__(self, db, root=None):
+    def __init__(self, db, root=None, data_dir=None):
         self.db, self.root = db, root
+        self.data_dir = Path(data_dir).resolve() if data_dir is not None else None
+        self.files = self.data_dir / 'artifacts' if self.data_dir else None
+        self.logs = self.data_dir / 'sessions' if self.data_dir else None
         self.pool = ThreadPoolExecutor(1, thread_name_prefix='6b-cloud') if root is not None else None
         # Rule copies loaded back in this process: only these are safe to overwrite with ours.
         self.rules_loaded = set()
+        self.columns = {}
 
     def _submit(self, fn, *args):
         return None if self.pool is None else self.pool.submit(fn, *args)
 
     def push(self, task_id, moment):
         return self._submit(self.sync, task_id, moment)
+
+    def backfill(self, task_id):
+        """On start: send the whole chat when its copy is missing or older than FORMAT, then any file
+        or log bytes the copy does not hold yet."""
+        return self._submit(self._backfill, task_id)
 
     def save_user(self, user):
         return self._submit(self._save_user, user)
@@ -232,58 +290,123 @@ class CloudSync:
         signed-out workspace."""
         return self._submit(self._restore_all, rules_email, workspace_rules)
 
-    def sync(self, task_id, moment):
+    def sync(self, task_id, moment, full=False):
         try:
-            snapshot = self.snapshot(task_id, moment)
+            snapshot = self.snapshot(task_id, moment, full)
         except Exception:  # noqa: BLE001 - the cloud copy must never fail a run
             log.exception('Could not read chat %s for the cloud copy', task_id)
             return False
-        return self.write(snapshot)
+        return self.write(snapshot) and self._push_bytes(task_id)
 
-    def snapshot(self, task_id, moment):
+    def _raw(self, sql, args=()):
+        """Rows exactly as SQLite holds them: JSON columns stay text, nothing is decoded."""
+        with self.db.connect() as c:
+            return [dict(r) for r in c.execute(sql, args).fetchall()]
+
+    def _tables(self):
+        return {r['name'] for r in self._raw("SELECT name FROM sqlite_master WHERE type='table'")}
+
+    def snapshot(self, task_id, moment, full=False):
         at = time.time()
         task = self.db.require_task(task_id)
-        since = task.get('cloud_synced_at') or 0
-        rows = lambda sql: self.db.all(sql, (task_id, since))
-        project = self.db.one('SELECT name FROM projects WHERE id=?', (task['project_id'],)) if task['project_id'] else None
+        since = 0 if full else task.get('cloud_synced_at') or 0
+        row = self._raw('SELECT * FROM tasks WHERE id=?', (task_id,))[0]
+        row.pop('cloud_synced_at', None)  # this server's own bookkeeping
+        project = self._raw('SELECT * FROM projects WHERE id=?', (task['project_id'],)) if task['project_id'] else []
         counts = self.db.one('SELECT (SELECT COUNT(*) FROM runs WHERE task_id=:t) AS runs,(SELECT COUNT(*) FROM messages WHERE task_id=:t) AS messages,'
                              '(SELECT COUNT(*) FROM artifacts WHERE task_id=:t) AS files,(SELECT COUNT(*) FROM tool_calls WHERE task_id=:t) AS tool_calls',
                              {'t': task_id})
         chat = {k: task[k] for k in ('id', 'title', 'status', 'project_id', 'context_scope', 'approval_policy', 'spec', 'plan', 'created_at', 'updated_at')}
-        chat.update(project_name=project and project['name'], archived=bool(task['archived']), counts=counts)
-        return {
-            'task_id': task_id, 'owner': task.get('owner'), 'at': at, 'moment': moment, 'chat': chat,
-            'runs': self.db.all('SELECT id,status,error,usage,created_at,started_at,finished_at FROM runs WHERE task_id=? ORDER BY created_at', (task_id,)),
-            'messages': rows('SELECT id,run_id,role,kind,content,created_at FROM messages WHERE task_id=? AND created_at>? ORDER BY created_at'),
-            'files': rows('SELECT id,run_id,name,version,media_type,size,sha256,metadata,created_at FROM artifacts WHERE task_id=? AND created_at>?'),
-            'tool_calls': rows('SELECT id,run_id,name,arguments,result,status,started_at,finished_at FROM tool_calls '
-                               'WHERE task_id=? AND COALESCE(finished_at,started_at)>?'),
-            # Memories can be edited or forgotten later, so the chat's whole set is sent each time.
-            'memories': self.db.all('SELECT id,project_id,content,created_at FROM memories WHERE task_id=? ORDER BY created_at', (task_id,)),
-        }
+        chat.update(project_name=project[0]['name'] if project else None, archived=bool(task['archived']), counts=counts)
+        tables, rows = self._tables(), {}
+        for name, table, column, changed in CHAT_TABLES:
+            if table not in tables:
+                rows[name] = []
+            elif changed:
+                rows[name] = self._raw(f'SELECT * FROM {table} WHERE task_id=? AND {changed}>? ORDER BY {column}', (task_id, since))
+            else:
+                rows[name] = self._raw(f'SELECT * FROM {table} WHERE task_id=? ORDER BY {column}', (task_id,))
+        return {'task_id': task_id, 'owner': task.get('owner'), 'at': at, 'moment': moment, 'chat': chat, 'row': row,
+                'project': project[0] if project else None, 'rows': rows,
+                # Memories can be edited or forgotten later, so the chat's whole set is sent each time.
+                'memories': self._raw('SELECT * FROM memories WHERE task_id=? ORDER BY created_at', (task_id,))}
 
     def write(self, snapshot):
         task_id = snapshot['task_id']
         base, tid = base_path(snapshot['owner']), key(task_id)
-        updates = {f'{base}/{name}/{tid}/{key(row["id"])}': document(row)
-                   for name in ('runs', 'messages', 'files', 'tool_calls') for row in snapshot[name]}
-        updates[f'{base}/memories/{tid}'] = {key(m['id']): document(m) for m in snapshot['memories']} or None
+        updates = [(f'{base}/{name}/{tid}/{key(row[column])}', exact(row))
+                   for name, _, column, _ in CHAT_TABLES for row in snapshot['rows'][name]]
+        updates.append((f'{base}/memories/{tid}', {key(m['id']): exact(m) for m in snapshot['memories']} or None))
+        if snapshot['project']:
+            updates.append((f"{base}/projects/{key(snapshot['project']['id'])}", exact(snapshot['project'])))
         # The chat's summary goes last, so it is marked synced only once its rows are in.
-        updates[f'{base}/chats/{tid}'] = {**document(snapshot['chat']), 'synced_at': SERVER_TIME, 'synced_on': snapshot['moment']}
+        updates.append((f'{base}/chats/{tid}', {**document(snapshot['chat']), 'row': exact(snapshot['row']), 'format': FORMAT,
+                                                'synced_at': SERVER_TIME, 'synced_on': snapshot['moment']}))
         try:
-            part, size = {}, 0
-            for path, value in updates.items():
-                length = len(encode(value))
-                if part and size + length > MAX_WRITE:
-                    self.root.update(part)
-                    part, size = {}, 0
-                part[path], size = value, size + length
-            self.root.update(part)
+            self._send(updates)
         except Exception as exc:  # noqa: BLE001 - logged; the next push sends these rows again
             log.warning('Cloud copy of chat %s (%s) failed: %s', task_id, snapshot['moment'], exc)
             return False
         with self.db.transaction() as c:
             c.execute('UPDATE tasks SET cloud_synced_at=MAX(COALESCE(cloud_synced_at,0),?) WHERE id=?', (snapshot['at'] - SYNC_MARGIN, task_id))
+        return True
+
+    def _send(self, updates):
+        """Write (path, value) pairs in order, as multi-path updates of at most MAX_WRITE bytes."""
+        part, size = {}, 0
+        for path, value in updates:
+            length = len(encode(value))
+            if part and size + length > MAX_WRITE:
+                self.root.update(part)
+                part, size = {}, 0
+            part[path], size = value, size + length
+        if part:
+            self.root.update(part)
+
+    def _backfill(self, task_id):
+        try:
+            task = self.db.require_task(task_id)
+            copied = self.root.child(f"{base_path(task.get('owner'))}/chats/{key(task_id)}/format").get()
+        except Exception as exc:  # noqa: BLE001 - logged; the next start tries again
+            log.warning('Could not check the cloud copy of chat %s: %s', task_id, exc)
+            return False
+        if copied != FORMAT:
+            return self.sync(task_id, 'startup', full=True)
+        return self._push_bytes(task_id)
+
+    def _push_bytes(self, task_id):
+        """Send the chat's files the copy does not list under stored/, and its raw provider logs
+        that grew since they were last sent; the pieces always before the entry that lists them."""
+        if self.data_dir is None:
+            return True
+        try:
+            task = self.db.require_task(task_id)
+            base, tid = base_path(task.get('owner')), key(task_id)
+            stored = self.root.child(f'{base}/stored/{tid}').get(shallow=True) or {}
+            for row in self._raw('SELECT * FROM artifacts WHERE task_id=? ORDER BY created_at', (task_id,)):
+                aid, path = key(row['id']), (self.files / row['path']).resolve()
+                if aid in stored or not path.is_relative_to(self.files) or not path.is_file():
+                    continue
+                data = path.read_bytes()
+                if hashlib.sha256(data).hexdigest() != row['sha256']:
+                    log.warning('Not copying file %s of chat %s: it no longer matches its checksum', row['id'], task_id)
+                    continue
+                self._send([*pieces(f'{base}/blobs/{tid}/{aid}', data), (f'{base}/files/{tid}/{aid}', exact(row)),
+                            (f'{base}/stored/{tid}/{aid}', -(-len(data) // CHUNK))])
+            folder = self.logs / task_id
+            if folder.is_dir():
+                logged = self.root.child(f'{base}/logged/{tid}').get() or {}
+                for path in sorted(folder.glob('*.jsonl')):
+                    rk = key(path.stem)
+                    if (logged.get(rk) or {}).get('size') == path.stat().st_size:
+                        continue
+                    data = path.read_bytes()
+                    self._send([*pieces(f'{base}/logs/{tid}/{rk}', data),
+                                (f'{base}/logged/{tid}/{rk}', {'pieces': -(-len(data) // CHUNK), 'size': len(data),
+                                                               'sha256': hashlib.sha256(data).hexdigest()})])
+        except Exception as exc:  # noqa: BLE001 - logged; the next push or start sends the rest
+            log.warning('Cloud copy of the files of chat %s failed: %s', task_id, exc)
+            return False
         return True
 
     def _save_user(self, user):
@@ -327,28 +450,183 @@ class CloudSync:
         return restored_count
 
     def _restore(self, owner, rules):
-        base, count = base_path(owner), 0
+        base, count, copied, files = base_path(owner), 0, 0, 0
         try:
             chats = self.root.child(f'{base}/chats').get() or {}
         except Exception as exc:  # noqa: BLE001 - logged; the next sign-in or start tries again
             log.warning('Could not read the cloud copy of %s: %s', base, exc)
             chats = {}
-        local = {r['id'] for r in self.db.all('SELECT id FROM tasks')}
+        local = {r['id']: r for r in self._raw('SELECT id,owner,updated_at FROM tasks')}
+        busy = {r['task_id'] for r in self._raw(f"SELECT task_id FROM runs WHERE status IN ({','.join('?' * len(RUNNING))})", RUNNING)}
         for tid, chat in chats.items():
             task_id = unkey(tid)
-            if task_id in local or not isinstance(chat, dict):
+            here = local.get(task_id)
+            # A chat with a run going here is this server's to write; another's copy must not touch it.
+            if not isinstance(chat, dict) or (here and (here['owner'] != owner or task_id in busy)):
                 continue
+            changed = 0
             try:
-                rows = {name: self.root.child(f'{base}/{name}/{tid}').get() or {}
-                        for name in ('runs', 'messages', 'tool_calls', 'memories')}
-                self._insert_chat(task_id, owner, restored(chat), {n: list(restored(v).values()) for n, v in rows.items()})
-                count += 1
+                if isinstance(chat.get('row'), str):
+                    changed = self._apply(base, tid, task_id, owner, chat, here)
+                elif not here:
+                    rows = {name: self.root.child(f'{base}/{name}/{tid}').get() or {}
+                            for name in ('runs', 'messages', 'tool_calls', 'memories')}
+                    self._insert_chat(task_id, owner, restored(chat), {n: list(restored(v).values()) for n, v in rows.items()})
+                if not here:
+                    count += 1
             except Exception:  # noqa: BLE001 - one damaged chat must not stop the others
                 log.exception('Could not restore chat %s from the cloud copy', task_id)
+                continue
+            # Also for chats already here: an earlier restore may have come before their files did.
+            added = self._restore_bytes(base, tid, task_id)
+            files, copied = files + added, copied + changed
+            if self.data_dir and (added or changed or not here):
+                from .sessions import save
+                save(self.db, self.data_dir, task_id)  # the stored transcript, rebuilt from the restored rows
         if rules:
             self._restore_rules(base)
-        if count:
-            log.info('Restored %d chat(s) from the cloud copy of %s', count, base)
+        if count or copied or files:
+            log.info('Restored %d chat(s), %d row(s) and %d file(s) from the cloud copy of %s', count, copied, files, base)
+        return count
+
+    def _columns(self, c, table):
+        if table not in self.columns:
+            self.columns[table] = [r[1] for r in c.execute(f'PRAGMA table_info({table})')]
+        return self.columns[table]
+
+    def _put(self, c, table, row, keys, replace):
+        """Insert the row, or with replace bring the row here up to it; 1 when anything changed."""
+        names = [n for n in self._columns(c, table) if n in row]
+        where = ' AND '.join(f'{k}=?' for k in keys)
+        here = c.execute(f"SELECT {','.join(names)} FROM {table} WHERE {where}", [row[k] for k in keys]).fetchone()
+        if here is None:
+            c.execute(f"INSERT INTO {table}({','.join(names)}) VALUES({','.join('?' * len(names))})", [row[n] for n in names])
+            return 1
+        if not replace or tuple(here) == tuple(row[n] for n in names):
+            return 0
+        c.execute(f"UPDATE {table} SET {','.join(f'{n}=?' for n in names)} WHERE {where}", [row[n] for n in names] + [row[k] for k in keys])
+        return 1
+
+    def _apply(self, base, tid, task_id, owner, chat, here):
+        """Bring this server's copy of the chat to the cloud's, row for row, from its exact rows. A chat
+        changed here after the copy was made keeps what it has and only gains the rows it lacks."""
+        task = json.loads(chat['row'])
+        replace = not here or here['updated_at'] <= task['updated_at']
+        nodes = {name: self.root.child(f'{base}/{name}/{tid}').get() or {} for name, *_ in CHAT_TABLES if name != 'files'}
+        nodes['memories'] = self.root.child(f'{base}/memories/{tid}').get() or {}
+        rows = {name: sorted((json.loads(v) for v in values(node) if isinstance(v, str)), key=lambda r: r.get('seq') or 0)
+                for name, node in nodes.items()}
+        project = None
+        if task.get('project_id'):
+            node = self.root.child(f"{base}/projects/{key(task['project_id'])}").get()
+            project = json.loads(node) if isinstance(node, str) else {'id': task['project_id'], 'name': chat.get('project_name') or 'Restored project',
+                                                                       'created_at': task.get('created_at') or time.time()}
+        now, changed = time.time(), 0
+        with self.db.transaction() as c:
+            if project and not c.execute('SELECT 1 FROM projects WHERE id=?', (project['id'],)).fetchone():
+                changed += self._put(c, 'projects', {**project, 'owner': owner}, ('id',), False)
+            # A run that was going cannot still be: its worker went with the server that ran it. A run
+            # waiting for an answer or approval stays waiting, to be answered here.
+            task['owner'] = owner
+            if here is None:
+                task['cloud_synced_at'] = now  # this server's own bookkeeping: the copy already has it all
+            if task.get('status') in RUNNING:
+                task['status'] = 'interrupted'
+            changed += self._put(c, 'tasks', task, ('id',), replace)
+            runs = set()
+            for r in rows['runs']:
+                if r.get('status') in RUNNING:
+                    r.update(status='interrupted', error=RESTORED, lease_until=None, finished_at=r.get('finished_at') or now)
+                changed += self._put(c, 'runs', r, ('id',), replace)
+                runs.add(r['id'])
+            runs |= {r[0] for r in c.execute('SELECT id FROM runs WHERE task_id=?', (task_id,))}
+            for name, table, column, _ in CHAT_TABLES:
+                if name in ('runs', 'files', 'events'):
+                    continue
+                for r in rows[name]:
+                    if table in ('questionnaires', 'approvals', 'tool_calls') and r.get('run_id') not in runs:
+                        continue
+                    if table == 'tool_calls' and r.get('status') in RUNNING:
+                        r['status'] = 'interrupted'
+                    changed += self._put(c, table, r, ('task_id', column) if table == 'task_rule_sets' else (column,), replace)
+            memories = {m['id'] for m in rows['memories']}
+            for m in rows['memories']:
+                changed += self._put(c, 'memories', m, ('id',), replace)
+            if replace:
+                # Memories forgotten in the copy's chat are forgotten here too.
+                gone = [r[0] for r in c.execute('SELECT id FROM memories WHERE task_id=?', (task_id,)) if r[0] not in memories]
+                c.executemany('DELETE FROM memories WHERE id=?', [(g,) for g in gone])
+                changed += len(gone)
+            # Events get this server's own sequence numbers, in the copy's order.
+            seen = {tuple(r) for r in c.execute('SELECT type,created_at,run_id FROM events WHERE task_id=?', (task_id,))}
+            for e in rows['events']:
+                if (e['type'], e['created_at'], e.get('run_id')) not in seen:
+                    c.execute('INSERT INTO events(task_id,run_id,type,payload,created_at) VALUES(?,?,?,?,?)',
+                              (task_id, e.get('run_id'), e['type'], e['payload'], e['created_at']))
+                    changed += 1
+        return changed
+
+    def _restore_bytes(self, base, tid, task_id):
+        """The chat's files and raw provider logs that the copy holds and this server does not."""
+        if self.data_dir is None:
+            return 0
+        try:
+            stored = self.root.child(f'{base}/stored/{tid}').get() or {}
+            logged = self.root.child(f'{base}/logged/{tid}').get() or {}
+        except Exception as exc:  # noqa: BLE001 - logged; the next sign-in or start tries again
+            log.warning('Could not read the cloud copy of the files of chat %s: %s', task_id, exc)
+            return 0
+        local, count = {r['id'] for r in self._raw('SELECT id FROM artifacts WHERE task_id=?', (task_id,))}, 0
+        for aid, parts in stored.items():
+            artifact_id = unkey(aid)
+            if artifact_id in local:
+                continue
+            try:
+                node = self.root.child(f'{base}/files/{tid}/{aid}').get()
+                row = json.loads(node) if isinstance(node, str) else restored(node or {})
+                name, folder = row.get('name') or '', (self.files / task_id / artifact_id).resolve()
+                if not (FILE_NAME.fullmatch(name) and FILE_ID.fullmatch(artifact_id) and isinstance(parts, int)
+                        and folder.is_relative_to(self.files)):
+                    log.warning('Skipped file %s of chat %s: its cloud copy is not a valid file', artifact_id, task_id)
+                    continue
+                data = joined((self.root.child(f'{base}/blobs/{tid}/{aid}').get() or {}) if parts else {}, parts)
+                if hashlib.sha256(data).hexdigest() != row.get('sha256'):
+                    log.warning('Skipped file %s of chat %s: its cloud copy does not match its checksum', artifact_id, task_id)
+                    continue
+                folder.mkdir(parents=True, exist_ok=True)
+                (folder / name).write_bytes(data)
+                metadata = row.get('metadata')
+                with self.db.transaction() as c:
+                    added = c.execute('INSERT OR IGNORE INTO artifacts(id,task_id,run_id,name,version,path,media_type,size,sha256,metadata,created_at) '
+                                      'VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                                      (artifact_id, task_id, row.get('run_id'), name, int(row.get('version') or 1),
+                                       str((folder / name).relative_to(self.files)), row.get('media_type') or 'application/octet-stream',
+                                       len(data), row['sha256'], metadata if isinstance(metadata, str) else as_json(metadata, {}),
+                                       row.get('created_at') or time.time())).rowcount
+                if added:
+                    count += 1
+                else:  # a file of the same name and version is already here
+                    (folder / name).unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001 - one damaged file must not stop the others
+                log.exception('Could not restore file %s of chat %s from the cloud copy', artifact_id, task_id)
+        folder = (self.logs / task_id).resolve()
+        for rk, entry in logged.items():
+            run = unkey(rk)
+            try:
+                if not (FILE_ID.fullmatch(run) and isinstance(entry, dict) and folder.is_relative_to(self.logs)):
+                    continue
+                path = folder / f'{run}.jsonl'
+                # Logs only ever grow, so a shorter one here is an older one.
+                if path.is_file() and path.stat().st_size >= entry.get('size', 0):
+                    continue
+                data = joined(self.root.child(f'{base}/logs/{tid}/{rk}').get() or {}, entry.get('pieces', 0))
+                if hashlib.sha256(data).hexdigest() != entry.get('sha256'):
+                    log.warning('Skipped the provider log of run %s: its cloud copy does not match its checksum', run)
+                    continue
+                folder.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            except Exception:  # noqa: BLE001 - one damaged log must not stop the others
+                log.exception('Could not restore the provider log of run %s from the cloud copy', run)
         return count
 
     def _insert_chat(self, task_id, owner, chat, rows):
