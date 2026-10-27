@@ -1,0 +1,62 @@
+{
+  "passed": true,
+  "checks": {
+    "step_has_seven_valid_solids": true,
+    "four_6_6_mm_mount_holes_on_50_mm_pcd": true,
+    "closed_finger_supports_and_clear_center": true,
+    "seven_watertight_stls": true,
+    "five_printable_parts_fit_assumed_bed": true,
+    "motion_evidence_passes": true,
+    "study_includes_36_to_80_mm_opening": true,
+    "all_package_hashes_match": true,
+    "corrected_notes_packaged": true,
+    "no_superseded_cradle_or_pending_files": true
+  },
+  "flange_hole_centers_mm": [
+    [
+      -82.67766952966,
+      -17.67766952966,
+      109.0
+    ],
+    [
+      -47.32233047033,
+      -17.67766952966,
+      109.0
+    ],
+    [
+      -82.67766952966,
+      17.677669529664,
+      109.0
+    ],
+    [
+      -47.32233047033,
+      17.677669529664,
+      109.0
+    ]
+  ],
+  "measured_pitch_circle_diameter_mm": 50.0,
+  "motion": [
+    {
+      "study": "moving_fingers_pickup",
+      "samples": 145,
+      "passed": true,
+      "collisions": 0,
+      "declared_tip_gap_range_mm": [
+        36.0,
+        80.0
+      ]
+    },
+    {
+      "study": "moving_fingers_release_reset",
+      "samples": 145,
+      "passed": true,
+      "collisions": 0,
+      "declared_tip_gap_range_mm": [
+        36.0,
+        80.0
+      ]
+    }
+  ],
+  "total_sampled_poses": 290,
+  "limit": "STEP/STL/package measurements and inspection of reported sampled motion. No new motion solver, force, fruit-contact, fit or physical test is implied."
+}

@@ -1,0 +1,46 @@
+{
+  "units": "mm",
+  "engine": "CadQuery 2.8.0",
+  "parts": [
+    {
+      "part": "marker_rack",
+      "valid_brep": true,
+      "solid_count": 1,
+      "watertight": true,
+      "winding_consistent": true,
+      "positive_volume": true,
+      "volume_mm3": 83343.418,
+      "bounds_mm": [
+        200.0,
+        52.0,
+        29.0
+      ],
+      "fits_print_bed": true,
+      "triangles": 4276,
+      "passed": true
+    }
+  ],
+  "assembly_bounds_mm": [
+    200.0,
+    29.002,
+    52.0
+  ],
+  "interferences": [],
+  "step_reimport_valid": true,
+  "passed": true,
+  "not_tested": [
+    "Physical fit",
+    "Load capacity",
+    "Material fatigue",
+    "Kinematics",
+    "Printer-specific tolerances",
+    "Minimum wall thickness over arbitrary curved features"
+  ],
+  "notes": [
+    "8 markers; barrel diameter 18 mm; diametral clearance 1 mm.",
+    "Two screws; Caps up; intended material PETG.",
+    "One connected part; print on its back. Confirm overhangs in slicer; supports may be required.",
+    "Wall fasteners and anchors are not supplied or load rated.",
+    "STEP contains editable solid geometry; the JSON recipe preserves construction parameters."
+  ]
+}

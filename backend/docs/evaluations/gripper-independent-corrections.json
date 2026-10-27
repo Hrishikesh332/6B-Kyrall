@@ -1,0 +1,10 @@
+{
+  "geometry_changed": false,
+  "package_version": 2,
+  "package_id": "cdf6a53a-c338-4e69-88fe-2bcb1eb298b6",
+  "note_id": "48a5a600-203b-487c-aa10-b3311dfc5313",
+  "corrections": [
+    "Drawing callout corrected to diameter 63 h8 after independent pixel inspection",
+    "Compiler failure attributed to observed SIGXCPU and single-thread regression"
+  ]
+}

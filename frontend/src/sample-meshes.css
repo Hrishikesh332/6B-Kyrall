@@ -1,0 +1,49 @@
+.sample-library-intro {
+  margin: 4px 0 24px;
+}
+.sample-library-intro h2 {
+  font-size: 17px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.sample-library-intro p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.sample-stats {
+  font-size: 11px;
+  color: var(--muted);
+}
+.sample-provenance {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid #333;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #aaa;
+}
+.sample-provenance > p {
+  margin-bottom: 12px;
+}
+.sample-provenance > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+.sample-provenance a {
+  color: var(--accent-text);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.sample-provenance details {
+  margin-top: 12px;
+}
+.sample-provenance summary {
+  cursor: pointer;
+}
+.sample-provenance details p {
+  margin-top: 10px;
+}

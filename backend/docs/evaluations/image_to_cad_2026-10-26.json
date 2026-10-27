@@ -1,0 +1,190 @@
+{
+  "evaluated_on": "2026-10-26",
+  "scope": "One synthetic image-to-parametric-CAD integration evaluation; not a real-photo accuracy benchmark",
+  "status": "completed",
+  "sources": [
+    {
+      "name": "mounting_plate.cad.json",
+      "sha256": "b57b8dca0fe0d959352daa653c18266bdc47aa80a31085537e1b2cbe5224787c"
+    },
+    {
+      "name": "validation.json",
+      "sha256": "5abc131b26f8f2e1ffb377c58a27281baf833a4183ef71fb0f063166ff484960"
+    },
+    {
+      "name": "mounting_plate_complete.zip",
+      "sha256": "73e26b3e113d80f597d6f2bfe5158f7c432ac81aeb892fcecbec71635b07ba03"
+    }
+  ],
+  "construction": {
+    "name": "mounting_plate",
+    "units": "mm",
+    "nodes": [
+      {
+        "id": "blank",
+        "op": "box",
+        "size": [
+          80.0,
+          50.0,
+          5.0
+        ]
+      },
+      {
+        "id": "bore",
+        "op": "cylinder",
+        "radius": 2.25,
+        "height": 7.0
+      },
+      {
+        "id": "h1",
+        "op": "transform",
+        "source": "bore",
+        "translation": [
+          -30.0,
+          -15.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": "h2",
+        "op": "transform",
+        "source": "bore",
+        "translation": [
+          30.0,
+          -15.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": "h3",
+        "op": "transform",
+        "source": "bore",
+        "translation": [
+          -30.0,
+          15.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": "h4",
+        "op": "transform",
+        "source": "bore",
+        "translation": [
+          30.0,
+          15.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": "plate",
+        "op": "cut",
+        "inputs": [
+          "blank",
+          "h1",
+          "h2",
+          "h3",
+          "h4"
+        ]
+      }
+    ],
+    "parts": [
+      {
+        "name": "mounting_plate",
+        "shape": "plate",
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "print_rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    ],
+    "print_bed": [
+      220.0,
+      220.0,
+      250.0
+    ],
+    "notes": [
+      "Vision-assisted reconstruction from four panels in plate-reference.png.",
+      "User-supplied outside dimensions 80 x 50 x 5 mm and hole diameter 4.5 mm.",
+      "Four estimated hole centers at centered XY (\u00b130,\u00b115) mm; normal to XY and through thickness.",
+      "No confirmed pockets or edge treatments; internal reference lines interpreted as rendering tessellation.",
+      "Material, load, manufacturing tolerances and mating assembly unverified."
+    ]
+  },
+  "validation": {
+    "units": "mm",
+    "engine": "CadQuery 2.8.0",
+    "parts": [
+      {
+        "part": "mounting_plate",
+        "valid_brep": true,
+        "solid_count": 1,
+        "watertight": true,
+        "winding_consistent": true,
+        "positive_volume": true,
+        "volume_mm3": 19682.104,
+        "bounds_mm": [
+          80.0,
+          50.0,
+          5.0
+        ],
+        "fits_print_bed": true,
+        "triangles": 1708,
+        "passed": true
+      }
+    ],
+    "assembly_bounds_mm": [
+      80.0,
+      50.0,
+      5.003
+    ],
+    "interferences": [],
+    "step_reimport_valid": true,
+    "passed": true,
+    "not_tested": [
+      "Physical fit",
+      "Load capacity",
+      "Material fatigue",
+      "Kinematics",
+      "Printer-specific tolerances",
+      "Minimum wall thickness over arbitrary curved features"
+    ],
+    "notes": [
+      "Vision-assisted reconstruction from four panels in plate-reference.png.",
+      "User-supplied outside dimensions 80 x 50 x 5 mm and hole diameter 4.5 mm.",
+      "Four estimated hole centers at centered XY (\u00b130,\u00b115) mm; normal to XY and through thickness.",
+      "No confirmed pockets or edge treatments; internal reference lines interpreted as rendering tessellation.",
+      "Material, load, manufacturing tolerances and mating assembly unverified."
+    ]
+  }
+}

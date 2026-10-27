@@ -1,0 +1,49 @@
+from dataclasses import dataclass, field
+from pathlib import Path
+import os
+import math
+
+# Providers backed by a language model, and those whose model can see tool images.
+MODEL_PROVIDERS = ('openai', 'claude')
+VISION_PROVIDERS = ('claude',)
+PROVIDERS = ('workshop', *MODEL_PROVIDERS)
+
+
+@dataclass
+class Settings:
+    data_dir: Path = field(default_factory=lambda: Path(os.getenv("6B_DATA_DIR", "./data")).resolve())
+    provider: str = field(default_factory=lambda: os.getenv("6B_PROVIDER", "workshop"))
+    model: str = field(default_factory=lambda: os.getenv("6B_MODEL", ""))
+    api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    claude_binary: str = field(default_factory=lambda: os.getenv("6B_CLAUDE_BINARY", ""))
+    claude_model: str = field(default_factory=lambda: os.getenv("6B_CLAUDE_MODEL", ""))
+    claude_timeout: int = field(default_factory=lambda: int(os.getenv("6B_CLAUDE_TIMEOUT", "600")))
+    # One model response with no tool call or text for this long is interrupted and steered.
+    claude_stall_seconds: int = field(default_factory=lambda: int(os.getenv("6B_CLAUDE_STALL_SECONDS", "420")))
+    anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
+    max_tool_calls: int = field(default_factory=lambda: int(os.getenv("6B_MAX_TOOL_CALLS", "80")))
+    api_token: str = field(default_factory=lambda: os.getenv("6B_API_TOKEN", ""))
+    reasoning_effort: str = field(default_factory=lambda: os.getenv("6B_REASONING_EFFORT", "medium"))
+    max_model_turns: int = field(default_factory=lambda: int(os.getenv("6B_MAX_MODEL_TURNS", "24")))
+    max_output_tokens: int = field(default_factory=lambda: int(os.getenv("6B_MAX_OUTPUT_TOKENS", "6000")))
+    max_run_tokens: int = field(default_factory=lambda: int(os.getenv("6B_MAX_RUN_TOKENS", "200000")))
+    cad_timeout: int = field(default_factory=lambda: int(os.getenv("6B_CAD_TIMEOUT", "90")))
+    tool_timeout: float = field(default_factory=lambda: float(os.getenv("6B_TOOL_TIMEOUT", "180")))
+    reference_domains: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip().lower() for x in os.getenv("6B_REFERENCE_DOMAINS", "").split(",") if x.strip()))
+    frontend_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parents[2] / "frontend")
+    worker_enabled: bool = True
+    isaac_ssh_host: str = field(default_factory=lambda: os.getenv('6B_ISAAC_SSH_HOST', ''))
+    isaac_container: str = field(default_factory=lambda: os.getenv('6B_ISAAC_CONTAINER', ''))
+    isaac_python: str = field(default_factory=lambda: os.getenv('6B_ISAAC_PYTHON', ''))
+    isaac_mcp_path: str = field(default_factory=lambda: os.getenv('6B_ISAAC_MCP_PATH', ''))
+
+    def prepare(self):
+        if not math.isfinite(self.tool_timeout) or self.tool_timeout<=0:
+            raise ValueError('6B_TOOL_TIMEOUT must be a positive finite number')
+        if self.provider not in PROVIDERS:
+            raise ValueError("6B_PROVIDER must be workshop, openai, or claude")
+        if self.provider == "openai" and (not self.api_key or not self.model):
+            raise ValueError("Live mode requires OPENAI_API_KEY and 6B_MODEL")
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        (self.data_dir / "artifacts").mkdir(exist_ok=True)
+        (self.data_dir / "workspaces").mkdir(exist_ok=True)

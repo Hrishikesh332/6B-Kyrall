@@ -1,0 +1,74 @@
+{
+  "passed": true,
+  "revisions": [
+    {
+      "version": 1,
+      "checks": {
+        "correct_pocket_count": true,
+        "marker_envelopes_clear": true,
+        "closed_pocket_floors": true,
+        "pocket_walls_present": true,
+        "pitch_25mm": true,
+        "mounting_positions_preserved": true,
+        "mount_holes_open": true
+      },
+      "pocket_x_centers_mm": [
+        -62.5,
+        -37.5,
+        -12.5,
+        12.5,
+        37.5,
+        62.5
+      ],
+      "mount_centers_mm": [
+        [
+          -55.0,
+          12.0,
+          65.0
+        ],
+        [
+          55.0,
+          12.0,
+          65.0
+        ]
+      ],
+      "step_sha256": "0ab62e35aa1332399258f418b5bb6435a2fc349b901cc08b913bf327d72d4c85"
+    },
+    {
+      "version": 2,
+      "checks": {
+        "correct_pocket_count": true,
+        "marker_envelopes_clear": true,
+        "closed_pocket_floors": true,
+        "pocket_walls_present": true,
+        "pitch_25mm": true,
+        "mounting_positions_preserved": true,
+        "mount_holes_open": true
+      },
+      "pocket_x_centers_mm": [
+        -87.5,
+        -62.5,
+        -37.5,
+        -12.5,
+        12.5,
+        37.5,
+        62.5,
+        87.5
+      ],
+      "mount_centers_mm": [
+        [
+          -55.0,
+          12.0,
+          65.0
+        ],
+        [
+          55.0,
+          12.0,
+          65.0
+        ]
+      ],
+      "step_sha256": "8b122e95be9d54f322e657654b9df0a5ac4857cdeb73163867cbbee3367f61f7"
+    }
+  ],
+  "limits": "Nominal geometric envelopes only; physical fit, print tolerances, mounting strength and ergonomics are not tested."
+}

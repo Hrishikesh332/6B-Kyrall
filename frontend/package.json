@@ -1,0 +1,38 @@
+{
+  "name": "6b-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test format.test.js src/lib.test.js src/assembly.test.js && vitest run",
+    "check": "npm run test && npm run build",
+    "format": "prettier --write src *.js *.html styles.css package.json"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@dicebear/collection": "^9.4.2",
+    "@dicebear/core": "^9.4.3",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@formkit/auto-animate": "^0.10.0",
+    "@lobehub/icons-static-svg": "1.101.0",
+    "lucide-react": "^1.61.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.8",
+    "@vitejs/plugin-react": "^4.7.0",
+    "jsdom": "^26.1.0",
+    "prettier": "3.9.10",
+    "vite": "^6.4.5",
+    "vitest": "4.1.12"
+  }
+}

@@ -1,0 +1,306 @@
+{
+  "name": "marker_organizer",
+  "units": "mm",
+  "nodes": [
+    {
+      "id": "base",
+      "op": "box",
+      "size": [
+        200.0,
+        29.0,
+        4.0
+      ]
+    },
+    {
+      "id": "base_place",
+      "op": "transform",
+      "source": "base",
+      "translation": [
+        0.0,
+        0.0,
+        2.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "back",
+      "op": "box",
+      "size": [
+        200.0,
+        4.0,
+        52.0
+      ]
+    },
+    {
+      "id": "back_place",
+      "op": "transform",
+      "source": "back",
+      "translation": [
+        0.0,
+        -12.5,
+        26.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "rail",
+      "op": "box",
+      "size": [
+        200.0,
+        29.0,
+        8.0
+      ]
+    },
+    {
+      "id": "rail_place",
+      "op": "transform",
+      "source": "rail",
+      "translation": [
+        0.0,
+        0.0,
+        38.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "body",
+      "op": "union",
+      "inputs": [
+        "base_place",
+        "back_place",
+        "rail_place"
+      ]
+    },
+    {
+      "id": "bore",
+      "op": "cylinder",
+      "radius": 9.5,
+      "height": 12.0
+    },
+    {
+      "id": "bore_0",
+      "op": "transform",
+      "source": "bore",
+      "translation": [
+        -84.0,
+        1.5,
+        38.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "bore_1",
+      "op": "transform",
+      "source": "bore",
+      "translation": [
+        -60.0,
+        1.5,
+        38.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "bore_2",
+      "op": "transform",
+      "source": "bore",
+      "translation": [
+        -36.0,
+        1.5,
+        38.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "bore_3",
+      "op": "transform",
+      "source": "bore",
+      "translation": [
+        -12.0,
+        1.5,
+        38.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "bore_4",
+      "op": "transform",
+      "source": "bore",
+      "translation": [
+        12.0,
+        1.5,
+        38.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "bore_5",
+      "op": "transform",
+      "source": "bore",
+      "translation": [
+        36.0,
+        1.5,
+        38.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "bore_6",
+      "op": "transform",
+      "source": "bore",
+      "translation": [
+        60.0,
+        1.5,
+        38.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "bore_7",
+      "op": "transform",
+      "source": "bore",
+      "translation": [
+        84.0,
+        1.5,
+        38.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "holder",
+      "op": "cut",
+      "inputs": [
+        "body",
+        "bore_0",
+        "bore_1",
+        "bore_2",
+        "bore_3",
+        "bore_4",
+        "bore_5",
+        "bore_6",
+        "bore_7"
+      ]
+    },
+    {
+      "id": "screw",
+      "op": "cylinder",
+      "radius": 2.2,
+      "height": 10.0
+    },
+    {
+      "id": "screw_0",
+      "op": "transform",
+      "source": "screw",
+      "translation": [
+        -90.0,
+        -12.5,
+        47.0
+      ],
+      "rotation": [
+        90.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "screw_1",
+      "op": "transform",
+      "source": "screw",
+      "translation": [
+        90.0,
+        -12.5,
+        47.0
+      ],
+      "rotation": [
+        90.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "mounted_holder",
+      "op": "cut",
+      "inputs": [
+        "holder",
+        "screw_0",
+        "screw_1"
+      ]
+    }
+  ],
+  "parts": [
+    {
+      "name": "marker_rack",
+      "shape": "mounted_holder",
+      "translation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "print_rotation": [
+        90.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "print_bed": [
+    220.0,
+    220.0,
+    250.0
+  ],
+  "notes": [
+    "8 markers; barrel diameter 18 mm; diametral clearance 1 mm.",
+    "Two screws; Caps up; intended material PETG.",
+    "One connected part; print on its back. Confirm overhangs in slicer; supports may be required.",
+    "Wall fasteners and anchors are not supplied or load rated.",
+    "STEP contains editable solid geometry; the JSON recipe preserves construction parameters."
+  ]
+}
