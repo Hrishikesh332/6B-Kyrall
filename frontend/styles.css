@@ -2509,3 +2509,28 @@ dialog::backdrop {
   background: #101010;
   box-shadow: 0 10px 20px #10101055;
 }
+.toast.warning {
+  border-color: #6b5a2a;
+}
+.toast.warning > svg {
+  color: #e2b84a;
+}
+.toast.error {
+  border-color: #6d3039;
+  background: #2c1d21;
+}
+.toast.error > svg {
+  color: #f2b9c4;
+}
+/* Second step of a ConfirmButton. */
+.confirming,
+.confirming:hover {
+  color: #f2b9c4;
+  border-color: #6d3039;
+  background: #311c21;
+}
+.icon-button.confirming {
+  width: auto;
+  padding: 0 10px;
+  font-size: 12px;
+}

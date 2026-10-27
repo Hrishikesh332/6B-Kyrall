@@ -213,6 +213,59 @@ describe("hosted keys", () => {
     ).toBe(false);
   });
 
+  it("runs OpenAI on the site's own key, choosing only the model", async () => {
+    const user = userEvent.setup();
+    const models = [
+      { id: "gpt-6-astra", name: "GPT-6 Astra" },
+      { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+      { id: "gpt-6.1-terra", name: "GPT-6.1 Terra" },
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      const base = overview(headersOf(init)),
+        model = headersOf(init)["x-6b-model"] || "gpt-6.1-terra";
+      const body = {
+        ...base,
+        active: {
+          provider: "openai",
+          name: "OpenAI API",
+          source: "site",
+          model,
+        },
+        providers: base.providers.map((p) =>
+          p.id === "openai"
+            ? { ...p, active: true, site_key: true, model, models }
+            : { ...p, active: false },
+        ),
+      };
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    render(<ModelConnection onClose={() => {}} />);
+    // A browser with nothing saved starts on the site's key and GPT-6.1 Terra.
+    expect(
+      (await screen.findByText(/· this site’s OpenAI API key/)).textContent,
+    ).toMatch(/^GPT-6\.1 Terra · /);
+    const select = screen.getByLabelText("Model");
+    expect(select).toHaveValue("gpt-6.1-terra");
+    expect([...select.options].map((o) => o.text)).toEqual([
+      "GPT-6 Astra",
+      "GPT-6.1 Sol",
+      "GPT-6.1 Terra",
+    ]);
+    expect(screen.queryByLabelText("OpenAI API key")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Continue with ChatGPT" }),
+    ).toBeNull();
+    await user.selectOptions(select, "gpt-6.1-sol");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(savedConnection(MODEL_CONNECTION)).toEqual({
+        provider: "openai",
+        model: "gpt-6.1-sol",
+      }),
+    );
+    expect(connectionHeaders("/tasks", "POST")["X-6B-Key"]).toBeUndefined();
+  });
+
   it("explains when this website is not approved for ChatGPT sign-in", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
       const body = String(url).endsWith("/integrations/chatgpt")
@@ -229,6 +282,7 @@ describe("hosted keys", () => {
     expect(
       screen.queryByRole("button", { name: "Continue with ChatGPT" }),
     ).toBeNull();
-    expect(screen.getByLabelText("OpenAI API key")).toBeTruthy();
+    // On the web ChatGPT connects only through its sign-in: no API key to fall back on.
+    expect(screen.queryByLabelText("OpenAI API key")).toBeNull();
   });
 });

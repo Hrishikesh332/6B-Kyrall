@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useAutoAnimate } from "@formkit/auto-animate/react";
 import {
   AlertCircle,
   ArrowUp,
   Archive,
+  ArchiveRestore,
   Box,
   Check,
   ChevronRight,
@@ -12,10 +13,19 @@ import {
   Image,
   FileArchive,
   Paperclip,
+  Plug,
   Plus,
   X,
 } from "lucide-react";
-import { date, modeLabel, size, statusLabel } from "./lib.js";
+import {
+  cadRefusal,
+  date,
+  followUpRefusal,
+  modeLabel,
+  modelConnected,
+  size,
+  statusLabel,
+} from "./lib.js";
 import ModelPicker from "./ModelPicker.jsx";
 import ProviderLogo from "./ProviderLogo.jsx";
 
@@ -45,6 +55,41 @@ export function IconButton({ label, children, ...props }) {
       {...props}
     >
       {children}
+    </button>
+  );
+}
+// A destructive button that asks once more in place: the first click changes it to
+// `confirm` ("Disconnect?"), a second click within a few seconds runs `onConfirm`.
+// Moving focus away or waiting resets it.
+export function ConfirmButton({
+  children,
+  confirm,
+  onConfirm,
+  className = "secondary danger-text",
+  label,
+  ...props
+}) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(timer);
+  }, [armed]);
+  return (
+    <button
+      type="button"
+      className={`${className}${armed ? " confirming" : ""}`}
+      aria-label={armed ? confirm : label}
+      title={armed ? undefined : label}
+      {...props}
+      onClick={() => {
+        if (!armed) return setArmed(true);
+        setArmed(false);
+        onConfirm();
+      }}
+      onBlur={() => setArmed(false)}
+    >
+      {armed ? confirm : children}
     </button>
   );
 }
@@ -102,6 +147,10 @@ export function Dialog({ title, onClose, children }) {
   const ref = useRef(null);
   const close = useRef(onClose);
   close.current = onClose;
+  const titleId = useId();
+  // Only a click that starts and ends on the backdrop closes the dialog, so selecting
+  // text in a field and releasing outside it keeps what was typed.
+  const pressedBackdrop = useRef(false);
   useEffect(() => {
     const previous = document.activeElement;
     ref.current.showModal();
@@ -112,18 +161,23 @@ export function Dialog({ title, onClose, children }) {
   return (
     <dialog
       ref={ref}
-      aria-labelledby="dialog-title"
+      aria-labelledby={titleId}
       onCancel={(e) => {
         e.preventDefault();
         close.current();
       }}
+      onMouseDown={(e) => {
+        pressedBackdrop.current = e.target === ref.current;
+      }}
       onClick={(e) => {
-        if (e.target === ref.current) close.current();
+        if (e.target === ref.current && pressedBackdrop.current)
+          close.current();
+        pressedBackdrop.current = false;
       }}
     >
       <div className="dialog-inner">
         <div className="dialog-heading">
-          <h2 id="dialog-title">{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <IconButton label="Close dialog" onClick={onClose}>
             <X size={19} />
           </IconButton>
@@ -139,6 +193,7 @@ export function FormDialog({
   onSubmit,
   children,
   submitLabel = "Save",
+  busyLabel = "Saving…",
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(null);
@@ -172,7 +227,7 @@ export function FormDialog({
             Cancel
           </button>
           <button className="primary" disabled={busy}>
-            {busy ? "Saving…" : submitLabel}
+            {busy ? busyLabel : submitLabel}
           </button>
         </div>
       </form>
@@ -184,6 +239,7 @@ export function Composer({
   projects = [],
   cap,
   onSubmit,
+  onRefused,
   onUpload,
   disabled = false,
   projectId = "",
@@ -193,10 +249,18 @@ export function Composer({
   attachments = null,
   hasAttachments = false,
   onModelChange,
+  onConnectModel,
   submitLabel = "Start chat",
   placeholder,
 }) {
   const [text, setText] = useState("");
+  // Once capabilities are known: without a model, ask for one as soon as the user starts writing.
+  const needsModel = !!cap && !!onConnectModel && !modelConnected(cap);
+  const asked = useRef(false);
+  const askForModel = () => {
+    asked.current = true;
+    onConnectModel();
+  };
   const [scope, setScope] = useState(projectId ? "project" : "isolated");
   const [project, setProject] = useState(projectId);
   const [busy, setBusy] = useState(false),
@@ -217,6 +281,20 @@ export function Composer({
   const submit = async (e) => {
     e.preventDefault();
     if (locked.current || disabled || (!text.trim() && !hasAttachments)) return;
+    // A prompt that is not about CAD stops here: nothing is sent and nothing on the page changes.
+    const refused = (initial ? cadRefusal : followUpRefusal)(
+      text.trim(),
+      cap?.cad_scope,
+    );
+    if (refused) {
+      onRefused?.(refused, "warning");
+      return;
+    }
+    if (needsModel) {
+      // Keep the draft: it is sent once a model is connected.
+      askForModel();
+      return;
+    }
     if (scope === "project" && !project) {
       setError(new Error("Choose a project to use project context."));
       return;
@@ -225,12 +303,13 @@ export function Composer({
     setBusy(true);
     setError(null);
     try {
-      await onSubmit({
+      const sent = await onSubmit({
         prompt: text.trim(),
         project_id: project || null,
         context_scope: scope,
       });
-      setText("");
+      // `false` means the prompt was refused and should stay in the box.
+      if (sent !== false) setText("");
     } catch (err) {
       setError(err);
     } finally {
@@ -255,6 +334,9 @@ export function Composer({
               : "Ask a follow-up or describe a change…")
           }
           value={text}
+          onFocus={() => {
+            if (needsModel && !asked.current) askForModel();
+          }}
           onChange={(e) => setText(e.target.value)}
           maxLength={24000}
           rows={initial ? 4 : 3}
@@ -291,7 +373,11 @@ export function Composer({
             <small className="muted">{contextScope} context</small>
           )}
           {initial ? (
-            <ModelPicker cap={cap} onChange={onModelChange} />
+            <ModelPicker
+              cap={cap}
+              onChange={onModelChange}
+              onError={setError}
+            />
           ) : (
             <span className="composer-model">
               {cap?.provider === "claude" || cap?.provider === "openai" ? (
@@ -319,6 +405,17 @@ export function Composer({
           </button>
         </div>
       </form>
+      {needsModel && (
+        <button
+          type="button"
+          className="composer-connect"
+          onClick={askForModel}
+        >
+          <Plug size={14} />
+          <span>No model connected.</span>
+          <strong>Connect Claude Code or ChatGPT to start</strong>
+        </button>
+      )}
       {error && <ErrorNotice error={error} />}
     </div>
   );
@@ -353,7 +450,7 @@ export function TaskRows({ tasks, onOpen, onArchive, onRestore }) {
   return (
     <div className="task-table">
       <div className="table-header">
-        <span>Task</span>
+        <span>Chat</span>
         <span>Status</span>
         <span>Updated</span>
         <span />
@@ -376,7 +473,11 @@ export function TaskRows({ tasks, onOpen, onArchive, onRestore }) {
                 label={onRestore ? `Restore ${t.title}` : `Archive ${t.title}`}
                 onClick={() => (onRestore || onArchive)(t.id)}
               >
-                {onRestore ? <Plus size={16} /> : <Archive size={16} />}
+                {onRestore ? (
+                  <ArchiveRestore size={16} />
+                ) : (
+                  <Archive size={16} />
+                )}
               </IconButton>
             ) : (
               <ChevronRight size={16} className="muted" />

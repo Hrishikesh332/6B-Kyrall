@@ -212,7 +212,7 @@ export function ParameterChange({ message }) {
   );
 }
 
-export function ApprovalPolicy({ task, refresh }) {
+export function ApprovalPolicy({ task, refresh, notify }) {
   const [busy, setBusy] = useState(false);
   const policy = task.approval_policy || "ask";
   const change = async (value) => {
@@ -223,6 +223,8 @@ export function ApprovalPolicy({ task, refresh }) {
         body: { approval_policy: value },
       });
       await refresh();
+    } catch (err) {
+      notify?.(err.message, "error");
     } finally {
       setBusy(false);
     }

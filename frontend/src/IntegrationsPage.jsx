@@ -54,19 +54,22 @@ function status(id, cap) {
 }
 
 export default function IntegrationsPage({ cap, setModal }) {
-  const [isaac, setIsaac] = useState(false),
-    [signInError, setSignInError] = useState(null);
+  const [isaac, setIsaac] = useState(false);
   useEffect(() => {
-    // Back from Sign in with ChatGPT: reopen the OpenAI connection, then tidy the URL.
+    // Back from Sign in with ChatGPT: reopen the OpenAI connection, with any sign-in
+    // error shown there, then tidy the URL.
     const params = new URLSearchParams(window.location.search);
     if (!params.has("chatgpt") && !params.has("chatgpt_error")) return;
-    setSignInError(params.get("chatgpt_error"));
     window.history.replaceState(
       null,
       "",
       window.location.pathname + window.location.hash,
     );
-    setModal({ kind: "model", provider: "openai" });
+    setModal({
+      kind: "model",
+      provider: "openai",
+      signInError: params.get("chatgpt_error"),
+    });
   }, []);
   const open = (id) => {
     if (models.includes(id)) setModal({ kind: "model", provider: id });
@@ -85,11 +88,6 @@ export default function IntegrationsPage({ cap, setModal }) {
         title="Integrations"
         description="Connect the accounts and tools 6B works with."
       />
-      {signInError && (
-        <p className="connection-check" role="alert">
-          {signInError}
-        </p>
-      )}
       {groups.map((group) => (
         <section className="app-group" key={group.name}>
           <h2>{group.name}</h2>

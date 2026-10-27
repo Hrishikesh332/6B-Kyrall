@@ -66,6 +66,9 @@ describe("rules", () => {
     await user.click(
       screen.getByRole("button", { name: "Delete rule: Use metric units" }),
     );
+    // Nothing is deleted until the second click confirms it.
+    expect(screen.getByText("Use metric units")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Delete?" }));
     await waitFor(() =>
       expect(screen.queryByText("Use metric units")).toBeNull(),
     );

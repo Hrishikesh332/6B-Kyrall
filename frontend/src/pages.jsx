@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   BookOpen,
@@ -45,6 +45,16 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
     `/tasks?q=${encodeURIComponent(search)}&status=${status}&archived=${archived}&limit=50&offset=${offset}`,
     revision,
   );
+  // Search as you type, once typing pauses; Enter still searches at once.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const next = query.trim();
+      if (next === search) return;
+      setSearch(next);
+      setOffset(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query, search]);
   const [busy, setBusy] = useState(false);
   const archive = async (id) => {
     if (busy) return;
@@ -54,14 +64,17 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
         method: "PATCH",
         body: { archived: !archived },
       });
+      // Moving the last chat off a later page would leave that page empty.
+      if (offset && resource.data?.items.length === 1)
+        setOffset((n) => Math.max(0, n - 50));
       await changed();
       notify(
         archived
-          ? "Project restored."
-          : "Project archived. Find it in the Archived tab.",
+          ? "Chat restored."
+          : "Chat archived. Find it in the Archived tab.",
       );
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
     } finally {
       setBusy(false);
     }
@@ -146,8 +159,7 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
       {resource.data && (
         <>
           <div className="results-label">
-            {resource.data.total}{" "}
-            {resource.data.total === 1 ? "chat" : "chats"}
+            {resource.data.total} {resource.data.total === 1 ? "chat" : "chats"}
           </div>
           <div aria-busy={busy}>
             {resource.data.items.length ? (
@@ -165,6 +177,16 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
                     : archived
                       ? "No archived chats"
                       : "Your next idea starts here"
+                }
+                action={
+                  !search &&
+                  !status &&
+                  !archived && (
+                    <a className="primary" href="#new">
+                      <Plus size={16} />
+                      Start a chat
+                    </a>
+                  )
                 }
               >
                 {search || status
@@ -202,8 +224,8 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
 }
 export function FilesPage({ openArtifact, revision, notify, setModal }) {
   const [query, setQuery] = useState(""),
-    [search, setSearch] = useState(""),
     [category, setCategory] = useState("all");
+  const search = query.trim();
   const resource = useResource("/files", revision);
   const files = (resource.data || []).filter(
     (file) =>
@@ -254,24 +276,18 @@ export function FilesPage({ openArtifact, revision, notify, setModal }) {
         ))}
       </div>
       <>
-        <form
-          className="filters"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setSearch(query.trim());
-          }}
-        >
+        {/* The library is already loaded, so it filters as you type. */}
+        <div className="filters">
           <div className="search-field">
             <Search size={16} />
             <input
               aria-label="Search files"
-              placeholder="Search files or project titles…"
+              placeholder="Search files or chat titles…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          <button className="secondary">Search</button>
-        </form>
+        </div>
         <ResourceState resource={resource} />
         {resource.data &&
           (files.length ? (
@@ -310,7 +326,7 @@ export function ProjectsPage({ projects, setModal, notify, openProject }) {
     try {
       setModal({ kind: "project", project: await api(`/projects/${id}`) });
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
     }
   };
   return (
@@ -464,7 +480,7 @@ function RemoteCollection({
       await changed();
       notify(row.enabled ? "Job paused." : "Job enabled.");
     } catch (err) {
-      notify(err.message);
+      notify(err.message, "error");
     } finally {
       setBusy(null);
     }
@@ -479,7 +495,7 @@ function RemoteCollection({
       notify(`Started “${row.name}”.`);
       openTask(task.id);
     } catch (err) {
-      notify(err.message);
+      notify(err.message, "error");
     } finally {
       setBusy(null);
     }

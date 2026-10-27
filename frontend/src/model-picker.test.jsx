@@ -79,6 +79,45 @@ describe("model picker", () => {
     );
   });
 
+  it("starts a site key choice in this browser", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            provider: "openai",
+            plan: false,
+            model: "gpt-6.1-terra",
+            models: [
+              { id: "gpt-6-astra", name: "GPT-6 Astra" },
+              { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+              { id: "gpt-6.1-terra", name: "GPT-6.1 Terra" },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+    render(
+      <ModelPicker
+        cap={{
+          provider: "openai",
+          model: "gpt-6.1-terra",
+          connection_source: "site",
+        }}
+      />,
+    );
+    const select = await screen.findByLabelText("Model");
+    expect(select).toHaveValue("gpt-6.1-terra");
+    await user.selectOptions(select, "gpt-6.1-sol");
+    // Only the model is kept; the site's key never reaches the browser.
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem(MODEL_CONNECTION))).toEqual({
+        provider: "openai",
+        model: "gpt-6.1-sol",
+      }),
+    );
+  });
+
   it("shows the workshop as a plain label", () => {
     const fetch = vi.spyOn(globalThis, "fetch");
     render(<ModelPicker cap={{ provider: "workshop" }} />);

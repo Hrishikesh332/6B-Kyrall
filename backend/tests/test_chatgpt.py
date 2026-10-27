@@ -50,6 +50,9 @@ class FakeOpenAI:
         if url.path == '/v1/models':
             assert request.headers['authorization'].startswith('Bearer ACCESS-SECRET')
             return httpx.Response(200, json={'models':[{'slug':'gpt-plan', 'display_name':'GPT Plan', 'visibility':'list'},
+                                                       {'slug':'terra', 'display_name':'GPT-6.1 Terra', 'visibility':'list'},
+                                                       {'slug':'gpt-6-astra', 'visibility':'list'},
+                                                       {'slug':'gpt-6.1-sol', 'display_name':'GPT-6.1 Sol', 'visibility':'hide'},
                                                        {'slug':'hidden', 'visibility':'hide'}]})
         if url.path == '/v1/responses':
             self.requests.append({'auth':request.headers['authorization'], 'body':json.loads(request.content)})
@@ -96,7 +99,9 @@ def test_sign_in_registers_6b_and_stores_tokens_only_encrypted(hosted, openai):
     assert back.status_code == 302 and back.headers['location'] == '/?chatgpt=connected#integrations'
     status = client.get('/api/integrations/chatgpt', base_url=LOCAL).get_json()
     assert status['signed_in'] and status['plan_usage'] and status['email'] == 'ada@example.com'
-    assert client.get('/api/integrations/chatgpt/models', base_url=LOCAL).get_json()['models'] == [{'id':'gpt-plan', 'name':'GPT Plan'}]
+    # Only GPT-6 Astra, GPT-6.1 Sol and GPT-6.1 Terra are offered, in that order, matched by slug or name; hidden ones stay out.
+    assert client.get('/api/integrations/chatgpt/models', base_url=LOCAL).get_json()['models'] == [
+        {'id':'gpt-6-astra', 'name':'GPT-6 Astra'}, {'id':'terra', 'name':'GPT-6.1 Terra'}]
     # Nothing readable on disk, and another browser sees nothing.
     for path in Path(hosted.state.settings.data_dir).rglob('*'):
         if path.is_file(): assert b'SECRET' not in path.read_bytes() and b'ada@example.com' not in path.read_bytes(), path
@@ -153,7 +158,7 @@ async def test_runs_use_the_plan_statelessly(hosted, openai):
         (200, completed({'type':'message', 'id':'msg_1', 'role':'assistant', 'content':[{'type':'output_text', 'text':'Saved the note.'}]})),
     ]
     headers = {'X-6B-Provider':'chatgpt', 'X-6B-Model':'gpt-plan'}
-    tid = client.post('/api/tasks', json={'prompt':'Write a short design note'}, headers=headers, base_url=LOCAL).get_json()['id']
+    tid = client.post('/api/tasks', json={'prompt':'Design a 40 mm bracket'}, headers=headers, base_url=LOCAL).get_json()['id']
     await hosted.state.engine.run(hosted.state.db.claim())
     task = hosted.state.db.detail(tid)
     assert task['status'] == 'completed' and [a['name'] for a in task['artifacts']] == ['note.md']
@@ -176,7 +181,7 @@ async def test_runs_use_the_plan_statelessly(hosted, openai):
 async def test_a_usage_limit_stops_the_run_with_a_clear_message(hosted, openai):
     client, _, _ = sign_in(hosted, openai)
     openai.responses = [(429, {'error':{'code':'subscription_sharing_usage_limit_exceeded', 'message':'limit'}})]
-    tid = client.post('/api/tasks', json={'prompt':'Write a note'}, headers={'X-6B-Provider':'chatgpt', 'X-6B-Model':'gpt-plan'},
+    tid = client.post('/api/tasks', json={'prompt':'Design a wall hook'}, headers={'X-6B-Provider':'chatgpt', 'X-6B-Model':'gpt-plan'},
                       base_url=LOCAL).get_json()['id']
     await hosted.state.engine.run(hosted.state.db.claim())
     task = hosted.state.db.detail(tid)
@@ -184,7 +189,7 @@ async def test_a_usage_limit_stops_the_run_with_a_clear_message(hosted, openai):
 
 
 def test_a_plan_run_needs_this_browsers_sign_in(hosted):
-    response = hosted.test_client().post('/api/tasks', json={'prompt':'Hi'}, headers={'X-6B-Provider':'chatgpt', 'X-6B-Model':'gpt-plan'})
+    response = hosted.test_client().post('/api/tasks', json={'prompt':'Design a hinge'}, headers={'X-6B-Provider':'chatgpt', 'X-6B-Model':'gpt-plan'})
     assert response.status_code == 422 and 'Continue with ChatGPT' in response.get_json()['detail']
 
 

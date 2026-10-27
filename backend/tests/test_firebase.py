@@ -114,15 +114,15 @@ def test_chats_projects_and_files_belong_to_their_account(tmp_path):
     for path in (f'/api/tasks/{task["id"]}', f'/api/tasks/{task["id"]}/events', f'/api/projects/{project["id"]}'):
         assert bo.get(path).status_code == 404
     assert bo.post(f'/api/tasks/{task["id"]}/messages', json={'content': 'mine now'}).status_code == 404
-    assert bo.post('/api/tasks', json={'prompt': 'Join in', 'project_id': project['id']}).status_code == 404
+    assert bo.post('/api/tasks', json={'prompt': 'Join in with a gear', 'project_id': project['id']}).status_code == 404
     assert ada.get(f'/api/tasks/{task["id"]}').status_code == 200
 
 
 def test_a_personal_workspace_works_signed_out_and_keeps_its_chats_apart(tmp_path):
     app = signed_in_app(tmp_path, required=False)
     guest, ada = app.test_client(), as_account(app, 'a')
-    local = guest.post('/api/tasks', json={'prompt': 'Made while signed out'}).json
-    mine = ada.post('/api/tasks', json={'prompt': 'Made by Ada'}).json
+    local = guest.post('/api/tasks', json={'prompt': 'Bracket made while signed out'}).json
+    mine = ada.post('/api/tasks', json={'prompt': 'Bracket made by Ada'}).json
     assert local['owner'] is None and mine['owner'] == 'a'
     assert [t['id'] for t in guest.get('/api/tasks').json['items']] == [local['id']]
     assert [t['id'] for t in ada.get('/api/tasks').json['items']] == [mine['id']]
@@ -267,7 +267,7 @@ def test_documents_fit_the_realtime_database():
 
 def test_chats_whose_copy_never_arrived_are_sent_when_the_server_starts(tmp_path):
     first = signed_in_app(tmp_path, required=False)
-    mine = as_account(first, 'a').post('/api/tasks', json={'prompt': 'Made while the database was missing'}).json['id']
+    mine = as_account(first, 'a').post('/api/tasks', json={'prompt': 'Bracket made while the cloud copy was missing'}).json['id']
     unclaimed = first.state.db.create_task(TaskCreate(prompt='Waits for its owner to sign in'))
     database = FakeDatabase()
     restarted = signed_in_app(tmp_path, required=False, database=database)
@@ -318,11 +318,11 @@ def test_a_fresh_server_loads_back_an_accounts_chats_and_memories(tmp_path):
 def test_restore_only_adds_what_is_missing(tmp_path):
     database = FakeDatabase()
     app = signed_in_app(tmp_path, required=False, database=database)
-    task = as_account(app, 'a').post('/api/tasks', json={'prompt': 'Kept as it is here'}).json['id']
+    task = as_account(app, 'a').post('/api/tasks', json={'prompt': 'Bracket kept as it is here'}).json['id']
     app.state.cloud.push(task, 'started').result()
     database.data['users']['a']['chats'][task]['title'] = 'Older title in the copy'
     assert app.state.cloud.restore('a').result() == 0
-    assert app.state.db.require_task(task)['title'] == 'Kept as it is here'
+    assert app.state.db.require_task(task)['title'] == 'Bracket kept as it is here'
     app.state.cloud.close()
 
 
@@ -486,14 +486,14 @@ def test_a_lossy_earlier_restore_is_brought_up_to_the_copy(tmp_path):
 def test_a_chat_with_a_run_going_here_is_never_touched_by_a_restore(tmp_path):
     database = FakeDatabase()
     app = signed_in_app(tmp_path, required=False, database=database)
-    task = as_account(app, 'a').post('/api/tasks', json={'prompt': 'Keep going'}).json['id']
+    task = as_account(app, 'a').post('/api/tasks', json={'prompt': 'Keep going on the bracket'}).json['id']
     app.state.cloud.push(task, 'started').result()
     with app.state.db.transaction() as c:
         c.execute("UPDATE runs SET status='running' WHERE task_id=?", (task,))
     database.data['users']['a']['chats'][task]['row'] = json.dumps({**_row(database.data['users']['a']['chats'][task]['row']), 'title': 'Changed elsewhere'})
     app.state.cloud.restore('a').result()
     app.state.cloud.close()
-    assert app.state.db.require_task(task)['title'] == 'Keep going'
+    assert app.state.db.require_task(task)['title'] == 'Keep going on the bracket'
     assert app.state.db.one('SELECT status FROM runs WHERE task_id=?', (task,))['status'] == 'running'
 
 

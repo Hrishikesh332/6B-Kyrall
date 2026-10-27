@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createAvatar } from "@dicebear/core";
 import { avataaars } from "@dicebear/collection";
 import {
+  AlertCircle,
   ArrowRight,
   BookOpen,
   Box,
@@ -139,7 +140,7 @@ function TopbarAccount({ auth, notify, boot, openSettings }) {
         `Signed in as ${user.email}. Your chats are being saved to your account.`,
       );
     } catch (err) {
-      notify(err.message);
+      notify(err.message, "error");
     } finally {
       setBusy(false);
     }
@@ -182,7 +183,7 @@ export default function App() {
     [connected, setConnected] = useState(false);
   const [modal, setModal] = useState(null),
     [preview, setPreview] = useState(null),
-    [toast, setToast] = useState("");
+    [toast, setToast] = useState(null);
   // Google sign-in: { enabled, firebase, user } from the server; null until known.
   const [auth, setAuth] = useState(null);
   const [revision, setRevision] = useState(0),
@@ -210,10 +211,15 @@ export default function App() {
       previousFocus?.focus?.();
     };
   }, [menuOpen]);
-  const notify = useCallback((message) => {
-    setToast(message);
+  // tone: "success" for confirmations, "warning" for refused requests, "error" for failures.
+  // Problems stay up longer so they can be read.
+  const notify = useCallback((message, tone = "success") => {
+    setToast({ message, tone });
     clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 5500);
+    toastTimer.current = setTimeout(
+      () => setToast(null),
+      tone === "success" ? 5500 : 9000,
+    );
   }, []);
   const refreshSidebar = useCallback(async () => {
     const [t, p] = await Promise.all([
@@ -355,7 +361,8 @@ export default function App() {
   }, [title]);
   useEffect(() => {
     const keydown = (e) => {
-      if (e.key === "Escape") {
+      // An open dialog handles its own Escape; leave the preview behind it open.
+      if (e.key === "Escape" && !document.querySelector("dialog[open]")) {
         setPreview(null);
         setMenuOpen(false);
       }
@@ -375,11 +382,19 @@ export default function App() {
     return () => window.removeEventListener("keydown", keydown);
   }, [modal, newTask]);
   const createTask = async (body) => {
-    const task = await api("/tasks", {
-      method: "POST",
-      headers: { "Idempotency-Key": crypto.randomUUID() },
-      body,
-    });
+    let task;
+    try {
+      task = await api("/tasks", {
+        method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+        body,
+      });
+    } catch (err) {
+      // Not a CAD request: nothing was started, so say why and leave the draft as typed.
+      if (err.code !== "off_topic") throw err;
+      notify(err.message, "warning");
+      return false;
+    }
     setTasks((list) =>
       [task, ...list.filter((x) => x.id !== task.id)].slice(0, 15),
     );
@@ -662,6 +677,7 @@ export default function App() {
                       createTask={createTask}
                       openTask={openTask}
                       setModal={setModal}
+                      notify={notify}
                     />
                   )}
                   {page === "tasks" && <TaskListPage {...common} />}
@@ -732,12 +748,19 @@ export default function App() {
       </div>
       <Animated className="toast-container" aria-live="polite">
         {toast && (
-          <div className="toast" role="status">
-            <Checkmark />
-            {toast}
+          <div
+            className={`toast ${toast.tone}`}
+            role={toast.tone === "error" ? "alert" : "status"}
+          >
+            {toast.tone === "success" ? (
+              <ShieldCheck size={17} />
+            ) : (
+              <AlertCircle size={17} />
+            )}
+            {toast.message}
             <IconButton
               label="Dismiss notification"
-              onClick={() => setToast("")}
+              onClick={() => setToast(null)}
             >
               <X size={15} />
             </IconButton>
@@ -761,9 +784,6 @@ export default function App() {
     </>
   );
 }
-function Checkmark() {
-  return <ShieldCheck size={17} />;
-}
 export function Home({
   tasks,
   projects,
@@ -773,6 +793,7 @@ export function Home({
   createTask,
   openTask,
   setModal,
+  notify,
 }) {
   const [draft, setDraft] = useState("");
   const clearDraft = useCallback(() => setDraft(""), []);
@@ -802,7 +823,9 @@ export function Home({
               projects={projects}
               cap={cap}
               onModelChange={refreshCap}
+              onConnectModel={() => setModal({ kind: "model" })}
               onSubmit={createTask}
+              onRefused={notify}
               projectId={projectId}
               draft={draft}
               onDraftUsed={clearDraft}
@@ -948,6 +971,7 @@ function ModalContent({
         onChanged={refreshCap}
         notify={notify}
         initialProvider={modal.provider}
+        signInError={modal.signInError}
       />
     );
   if (modal.kind === "token")
@@ -956,6 +980,7 @@ function ModalContent({
         title="Unlock your workspace"
         onClose={close}
         submitLabel="Unlock"
+        busyLabel="Unlocking…"
         onSubmit={async (data) => {
           sessionStorage.setItem("6b-token", data.token);
           await api("/capabilities");
@@ -1047,6 +1072,7 @@ function ModalContent({
         title="New job"
         onClose={close}
         submitLabel="Create job"
+        busyLabel="Creating…"
         onSubmit={async (data) => {
           await api("/schedules", {
             method: "POST",
@@ -1088,7 +1114,7 @@ function ModalContent({
   if (modal.kind === "rename")
     return (
       <FormDialog
-        title="Rename project"
+        title="Rename chat"
         onClose={close}
         onSubmit={async (data) => {
           await api(`/tasks/${modal.task.id}`, { method: "PATCH", body: data });
@@ -1096,7 +1122,7 @@ function ModalContent({
         }}
       >
         <label>
-          Project name
+          Chat name
           <input
             name="title"
             defaultValue={modal.task.title}
@@ -1120,6 +1146,7 @@ function ModalContent({
         title="Forget this memory?"
         onClose={close}
         submitLabel="Forget memory"
+        busyLabel="Forgetting…"
         onSubmit={async () => {
           await api(`/memories/${modal.id}`, { method: "DELETE" });
           await changed();
@@ -1157,7 +1184,7 @@ function ProjectDialog({ modal, close, changed, notify }) {
       setProject((p) => ({ ...p, files: updated.files }));
       notify("Reference files attached.");
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
     } finally {
       setBusy(false);
       e.target.value = "";

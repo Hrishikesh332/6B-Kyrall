@@ -71,7 +71,9 @@ export default function ProjectPage({
         projects={projects}
         cap={cap}
         onModelChange={onModelChange}
+        onConnectModel={() => setModal({ kind: "model" })}
         onSubmit={createTask}
+        onRefused={notify}
         projectId={id}
         submitLabel="New chat"
         placeholder={`Start a new chat in ${project.name}…`}
@@ -87,8 +89,7 @@ export default function ProjectPage({
             <TaskRows tasks={project.chats} onOpen={openTask} />
           ) : (
             <Empty icon={MessageSquare} title="No chats yet">
-              Chats you start here share this project’s brief, files and
-              memory.
+              Chats you start here share this project’s brief, files and memory.
             </Empty>
           )}
         </section>
@@ -143,7 +144,7 @@ function ProjectMemory({ project, openTask, setModal, notify, changed }) {
       await changed();
       return true;
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
       return false;
     } finally {
       setBusy(false);

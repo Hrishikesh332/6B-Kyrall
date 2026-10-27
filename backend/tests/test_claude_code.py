@@ -3,7 +3,7 @@ import os
 import pytest
 import claude_agent_sdk
 from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, TextBlock, ToolUseBlock, UserMessage
-from app.claude_code import MAX_STEERS, PREFIX, STEER, available_models, claude_env, count_usage, run_claude
+from app.claude_code import MAX_STEERS, PREFIX, STEER, claude_env, count_usage, run_claude
 from app.config import Settings
 from app.main import create_app
 from app.models import ClarificationAnswer
@@ -90,6 +90,8 @@ async def test_claude_questions_resume_from_application_state(app, task, claude)
     assert options.allowed_tools and all(t.startswith(PREFIX) for t in options.allowed_tools)
     assert PREFIX+'inspect_image' in options.allowed_tools
     assert options.max_buffer_size >= 8*1024*1024  # inline review renders exceed the 1 MB default
+    # Every Claude run uses an offered model at xhigh effort.
+    assert options.model == 'claude-opus-5-5' and options.effort == 'xhigh'
     db.answer(task, waiting['questionnaires'][0]['id'], ClarificationAnswer(answers={'mounting':'Two screws'}))
     factory, clients = claude([('tool','write_document',{'name':'notes.md','content':'Two screws'}),('final','Notes saved')])
     resumed = db.claim(); assert resumed['id'] == run['id']
@@ -180,14 +182,14 @@ def test_connection_choice_is_checked_saved_and_survives_restart(tmp_path, monke
 
     async def accepted(self, provider, model='', api_key=''): return {'ok':True, 'message':'Signed in.'}
     monkeypatch.setattr('app.connections.Connections.check', accepted)
-    switched = c.put('/api/integrations/model', json={'provider':'claude','model':'sonnet','anthropic_api_key':'sk-ant-secret'})
+    switched = c.put('/api/integrations/model', json={'provider':'claude','model':'claude-sonnet-5-5','anthropic_api_key':'sk-ant-secret'})
     assert switched.status_code == 200 and switched.json['active']['provider'] == 'claude'
     assert 'sk-ant-secret' not in switched.get_data(as_text=True)
     cap = c.get('/api/capabilities').json
     assert cap['provider'] == 'claude' and cap['provider_name'] == 'Claude Code' and cap['connection_source'] == 'workspace'
     saved = tmp_path/'integrations'/'model.json'
     assert oct(os.stat(saved).st_mode & 0o777) == '0o600'
-    assert app.state.settings.claude_model == 'sonnet' and app.state.settings.anthropic_api_key == 'sk-ant-secret'
+    assert app.state.settings.claude_model == 'claude-sonnet-5-5' and app.state.settings.anthropic_api_key == 'sk-ant-secret'
 
     restarted = create_app(settings())
     assert restarted.state.settings.provider == 'claude'
@@ -197,45 +199,39 @@ def test_connection_choice_is_checked_saved_and_survives_restart(tmp_path, monke
     assert back.status_code == 200 and restarted.state.settings.provider == 'workshop'
 
 
-@pytest.mark.asyncio
-async def test_available_models_come_from_the_claude_code_handshake(tmp_path):
-    class Handshake:
-        def __init__(self, options): self.options, self.closed = options, False
-        async def connect(self): pass
-        async def get_server_info(self):
-            return {'models':[{'value':'default', 'displayName':'Default (recommended)', 'description':'Sonnet'},
-                              {'value':'opus', 'displayName':'Opus', 'description':'Complex work'}, {'displayName':'No value'}]}
-        async def disconnect(self): self.closed = True
-    made = []
-    factory = lambda options: made.append(Handshake(options)) or made[-1]
-    models = await available_models(Settings(data_dir=tmp_path, anthropic_api_key=''), factory)
-    assert models == [{'id':'', 'name':'Account default', 'description':'Sonnet'}, {'id':'opus', 'name':'Opus', 'description':'Complex work'}]
-    assert made[0].closed and made[0].options.tools == [] and made[0].options.setting_sources == []
-
-
-def test_model_picker_lists_and_switches_the_claude_model(tmp_path, monkeypatch):
-    app = create_app(Settings(data_dir=tmp_path, provider='claude', model='', api_token='', worker_enabled=False, anthropic_api_key=''))
+def test_only_opus_and_sonnet_5_5_are_offered(tmp_path):
+    settings = lambda: Settings(data_dir=tmp_path, provider='claude', model='', api_token='', worker_enabled=False, anthropic_api_key='')
+    app = create_app(settings())
     c = app.test_client()
-    calls = []
-    async def listed(settings): calls.append(1); return [{'id':'', 'name':'Default', 'description':''}, {'id':'opus', 'name':'Opus', 'description':''}]
-    monkeypatch.setattr('app.claude_code.available_models', listed)
-    first = c.get('/api/integrations/model/models').json
-    assert first['provider'] == 'claude' and [m['id'] for m in first['models']] == ['', 'opus']
-    c.get('/api/integrations/model/models')
-    assert len(calls) == 1
-    chosen = c.put('/api/integrations/model/choice', json={'model':'opus'})
-    assert chosen.status_code == 200 and chosen.json['active']['model'] == 'opus'
-    assert app.state.settings.claude_model == 'opus' and c.get('/api/integrations/model/models').json['model'] == 'opus'
-    assert create_app(Settings(data_dir=tmp_path, provider='workshop', model='', api_token='', worker_enabled=False, anthropic_api_key='')).state.settings.claude_model == 'opus'
-
-
-def test_model_picker_falls_back_to_aliases_when_claude_code_cannot_answer(tmp_path, monkeypatch):
-    app = create_app(Settings(data_dir=tmp_path, provider='claude', model='', api_token='', worker_enabled=False, anthropic_api_key=''))
-    async def broken(settings): raise ProviderError('Claude Code executable not found')
-    monkeypatch.setattr('app.claude_code.available_models', broken)
-    assert [m['id'] for m in app.test_client().get('/api/integrations/model/models').json['models']] == ['', 'opus', 'sonnet', 'haiku']
+    listed = c.get('/api/integrations/model/models').json
+    assert listed['models'] == [{'id':'claude-opus-5-5', 'name':'Opus 5.5'}, {'id':'claude-sonnet-5-5', 'name':'Sonnet 5.5'}]
+    # No choice yet (the account default before) runs on Opus 5.5.
+    assert listed['model'] == 'claude-opus-5-5' == app.state.settings.claude_model
+    assert c.put('/api/integrations/model/choice', json={'model':'haiku'}).status_code == 422
+    chosen = c.put('/api/integrations/model/choice', json={'model':'claude-sonnet-5-5'})
+    assert chosen.status_code == 200 and chosen.json['active']['model'] == 'claude-sonnet-5-5'
+    assert create_app(settings()).state.settings.claude_model == 'claude-sonnet-5-5'
+    # A model saved by an older version (a CLI alias) runs on Opus 5.5.
+    saved = tmp_path/'integrations'/'model.json'
+    saved.write_text(saved.read_text().replace('claude-sonnet-5-5', 'opus'))
+    assert create_app(settings()).state.settings.claude_model == 'claude-opus-5-5'
     workshop = create_app(Settings(data_dir=tmp_path/'w', provider='workshop', model='', api_token='', worker_enabled=False, anthropic_api_key=''))
-    assert workshop.test_client().put('/api/integrations/model/choice', json={'model':'opus'}).status_code == 422
+    assert workshop.test_client().put('/api/integrations/model/choice', json={'model':'claude-opus-5-5'}).status_code == 422
+
+
+def test_only_gpt_6_astra_and_6_1_sol_and_terra_are_offered(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path, provider='openai', model='gpt-6.1-sol', api_key='sk-local', api_token='',
+                              worker_enabled=False, anthropic_api_key=''))
+    c = app.test_client()
+    listed = c.get('/api/integrations/model/models').json
+    assert listed['models'] == [{'id':'gpt-6-astra', 'name':'GPT-6 Astra'}, {'id':'gpt-6.1-sol', 'name':'GPT-6.1 Sol'},
+                                {'id':'gpt-6.1-terra', 'name':'GPT-6.1 Terra'}] and listed['model'] == 'gpt-6.1-sol'
+    assert c.put('/api/integrations/model/choice', json={'model':'gpt-5'}).status_code == 422
+    assert c.put('/api/integrations/model', json={'provider':'openai', 'model':'gpt-5'}).status_code == 422
+    chosen = c.put('/api/integrations/model/choice', json={'model':'gpt-6-astra'})
+    assert chosen.status_code == 200 and chosen.json['active']['model'] == 'gpt-6-astra'
+    # Locally the site key and its GPT-6.1 Terra default never apply.
+    assert chosen.json['active']['source'] == 'workspace'
 
 
 def test_removed_provider_is_rejected_and_old_choice_falls_back(tmp_path):

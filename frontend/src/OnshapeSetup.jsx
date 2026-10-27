@@ -23,7 +23,7 @@ import {
   saveConnection,
   savedConnection,
 } from "./lib.js";
-import { Dialog, ErrorNotice, Loading } from "./ui.jsx";
+import { ConfirmButton, Dialog, ErrorNotice, Loading } from "./ui.jsx";
 
 // Onshape is read-only here: browse, then import geometry into a task.
 export default function OnshapeSetup({
@@ -94,7 +94,11 @@ export default function OnshapeSetup({
             onConnected={async (next) => {
               setStatus(next);
               await onChanged?.();
-              notify?.(`Onshape connected as ${next.user?.name}.`);
+              notify?.(
+                next.user?.name
+                  ? `Onshape connected as ${next.user.name}.`
+                  : "Onshape connected.",
+              );
               setScreen("browse");
             }}
             onClose={onClose}
@@ -308,7 +312,9 @@ function Connected({ status, onBrowse, onStatus, onChanged, onClose, notify }) {
               onStatus(next);
               setCheck({
                 ok: true,
-                message: `Connection works. Signed in as ${next.user?.name}.`,
+                message: next.user?.name
+                  ? `Connection works. Signed in as ${next.user.name}.`
+                  : "Connection works.",
               });
             })
           }
@@ -325,10 +331,10 @@ function Connected({ status, onBrowse, onStatus, onChanged, onClose, notify }) {
           Open Onshape <ExternalLink size={14} />
         </a>
         {!fromEnv && (
-          <button
-            className="secondary danger-text"
+          <ConfirmButton
+            confirm="Remove saved keys?"
             disabled={!!busy}
-            onClick={() =>
+            onConfirm={() =>
               run("disconnect", async () => {
                 onStatus(
                   await api("/integrations/onshape", { method: "DELETE" }),
@@ -336,14 +342,14 @@ function Connected({ status, onBrowse, onStatus, onChanged, onClose, notify }) {
                 if (fromBrowser) forgetConnection(ONSHAPE_CONNECTION);
                 await onChanged?.();
                 notify?.(
-                  "Onshape disconnected. Imported files stay in your tasks.",
+                  "Onshape disconnected. Imported files stay in your chats.",
                 );
                 onClose();
               })
             }
           >
             <Unplug size={14} /> Disconnect
-          </button>
+          </ConfirmButton>
         )}
       </div>
     </>
@@ -401,6 +407,7 @@ function OnshapeBrowser({ status, taskId, onBack, onImported, notify }) {
     const controller = new AbortController();
     setElements(null);
     setElement(null);
+    setError(null);
     api(`/onshape/documents/${doc.id}/w/${doc.workspace_id}/elements`, {
       signal: controller.signal,
     })
@@ -671,9 +678,11 @@ export function OnshapeExport({
     [flatten, setFlatten] = useState(true),
     [sending, setSending] = useState(false),
     [result, setResult] = useState(null);
-  useEffect(() => {
+  const check = () => {
+    setError(null);
     api("/integrations/onshape").then(setStatus).catch(setError);
-  }, []);
+  };
+  useEffect(check, []);
   const send = async () => {
     setSending(true);
     setError(null);
@@ -702,7 +711,17 @@ export function OnshapeExport({
       <div className="onshape-setup onshape-export">
         {!status && !error ? (
           <Loading>Checking connection…</Loading>
-        ) : status && !status.configured ? (
+        ) : !status ? (
+          // Without the connection details there is nothing to send to or browse.
+          <>
+            <ErrorNotice error={error} retry={check} />
+            <div className="form-actions">
+              <button className="secondary" onClick={onClose}>
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : !status.configured ? (
           <>
             <Summary status={status}>Not connected</Summary>
             <p>

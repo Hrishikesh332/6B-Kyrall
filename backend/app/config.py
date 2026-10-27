@@ -8,11 +8,28 @@ import math
 MODEL_PROVIDERS = ('openai', 'claude')
 VISION_PROVIDERS = ('claude',)
 PROVIDERS = ('workshop', *MODEL_PROVIDERS)
+# The Claude models 6B offers, both run at xhigh effort. A model saved before (an alias such as
+# "opus", or none for the account default) runs on the first.
+CLAUDE_MODELS = ({'id':'claude-opus-5-5', 'name':'Opus 5.5'}, {'id':'claude-sonnet-5-5', 'name':'Sonnet 5.5'})
+CLAUDE_EFFORT = 'xhigh'
+
+
+def claude_model_id(model):
+    return model if any(m['id'] == model for m in CLAUDE_MODELS) else CLAUDE_MODELS[0]['id']
+
+# The OpenAI models 6B offers, through an API key or a ChatGPT plan. Hosted 6B runs on the
+# last unless 6B_MODEL names another of them.
+OPENAI_MODELS = ({'id':'gpt-6-astra', 'name':'GPT-6 Astra'}, {'id':'gpt-6.1-sol', 'name':'GPT-6.1 Sol'},
+                 {'id':'gpt-6.1-terra', 'name':'GPT-6.1 Terra'})
+
+
+def openai_model_id(model):
+    return model if any(m['id'] == model for m in OPENAI_MODELS) else OPENAI_MODELS[-1]['id']
 
 # Hosted 6B: the browser's own model connection for the current request or run. It
 # shadows these settings fields only inside that context and never touches the shared values.
 CONNECTION = ContextVar('6b_connection', default=None)
-CONNECTION_FIELDS = frozenset({'provider', 'model', 'api_key', 'claude_model', 'anthropic_api_key', 'claude_home', 'openai_plan'})
+CONNECTION_FIELDS = frozenset({'provider', 'model', 'api_key', 'claude_model', 'anthropic_api_key', 'claude_home', 'openai_plan', 'site_key'})
 # The Google account signed in for the current request (uid, email, name, picture), when
 # Google sign-in is on. New chats, projects and jobs belong to it.
 USER = ContextVar('6b_user', default=None)
@@ -59,6 +76,8 @@ class Settings:
     claude_home: str = ''
     # The OpenAI connection is a user's ChatGPT plan (Sign in with ChatGPT), not an API key.
     openai_plan: bool = False
+    # Hosted: the OpenAI connection is this deployment's own OPENAI_API_KEY, not the browser's.
+    site_key: bool = False
     # Sign in with ChatGPT on a hosted website needs a client ID approved by OpenAI. Without
     # one, OpenAI's self-serve registration only redirects to http://127.0.0.1.
     chatgpt_client_id: str = field(default_factory=lambda: os.getenv('6B_CHATGPT_CLIENT_ID', ''))
@@ -83,13 +102,16 @@ class Settings:
     def __getattribute__(self, name):
         if name in CONNECTION_FIELDS:
             override = CONNECTION.get()
-            if override is not None and name in override: return override[name]
+            value = override[name] if override is not None and name in override else object.__getattribute__(self, name)
+            return claude_model_id(value) if name == 'claude_model' else value
         return object.__getattribute__(self, name)
 
     def prepare(self):
         if self.hosted:
-            # Nothing server-wide may pay for a visitor's run.
-            self.provider, self.model, self.api_key, self.anthropic_api_key = 'workshop', '', '', ''
+            # Nothing server-wide may pay for a visitor's run except the deployment's own
+            # OPENAI_API_KEY: when set, every OpenAI chat runs on it, by default on GPT-6.1 Terra.
+            self.anthropic_api_key = ''
+            self.provider, self.model = ('openai', openai_model_id(self.model)) if self.api_key else ('workshop', '')
         if not 1 <= self.workers <= 16:
             raise ValueError('6B_WORKERS must be between 1 and 16')
         if not math.isfinite(self.tool_timeout) or self.tool_timeout<=0:

@@ -1,4 +1,5 @@
-"""Hosted 6B (6B_HOSTED=1): every browser brings its own model and Onshape keys."""
+"""Hosted 6B (6B_HOSTED=1): every browser brings its own model and Onshape keys, except that
+a deployment's own OPENAI_API_KEY, when set, runs every OpenAI chat."""
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ from app.main import create_app
 from app.models import TaskCreate
 from .test_onshape import SECRET, fake_onshape
 
-PROMPT = {'prompt':'Write a short design note'}
+PROMPT = {'prompt':'Design a 40 mm bracket'}
 
 
 def browser(provider='openai', model='gpt-test', key=''):
@@ -25,8 +26,15 @@ def hosted(tmp_path):
     # A connection saved by an earlier single-user install must not leak into hosted mode.
     (tmp_path/'integrations').mkdir()
     (tmp_path/'integrations'/'model.json').write_text(json.dumps({'provider':'claude','anthropic_api_key':'SAVED-SECRET'}))
-    return create_app(Settings(data_dir=tmp_path, hosted=True, provider='openai', model='server-model', api_key='SERVER-SECRET',
+    return create_app(Settings(data_dir=tmp_path, hosted=True, provider='claude', model='server-model',
                                anthropic_api_key='SERVER-ANTHROPIC', api_token='', worker_enabled=False))
+
+
+@pytest.fixture
+def site(tmp_path):
+    # The deployment's own OpenAI API key; the Anthropic one is still never used.
+    return create_app(Settings(data_dir=tmp_path, hosted=True, api_key='SITE-SECRET-KEY', anthropic_api_key='SERVER-ANTHROPIC',
+                               api_token='', worker_enabled=False))
 
 
 class Recorder:
@@ -54,8 +62,8 @@ def test_server_keys_and_saved_connections_are_ignored(hosted):
 
 def test_answers_follow_each_browser_and_never_leak(hosted):
     client = hosted.test_client()
-    mine = client.get('/api/integrations/model', headers=browser('claude', 'sonnet')).get_json()['active']
-    assert (mine['provider'], mine['model']) == ('claude', 'sonnet')
+    mine = client.get('/api/integrations/model', headers=browser('claude', 'claude-sonnet-5-5')).get_json()['active']
+    assert (mine['provider'], mine['model']) == ('claude', 'claude-sonnet-5-5')
     caps = client.get('/api/capabilities', headers=browser('openai', 'gpt-x')).get_json()
     assert caps['provider'] == 'openai' and caps['model'] == 'gpt-x' and caps['connection_source'] == 'browser'
     assert client.get('/api/capabilities').get_json()['provider'] == 'workshop'
@@ -153,9 +161,10 @@ async def test_claude_runs_get_the_key_and_a_private_home(hosted, monkeypatch):
         engine.db.finish(run['id'], 'completed')
     monkeypatch.setattr('app.claude_code.run_claude', fake_run_claude)
     client = hosted.test_client()
+    # A model saved by an older page (an alias) runs on Opus 5.5.
     client.post('/api/tasks', json=PROMPT, headers=browser('claude', 'opus', 'sk-ant-PRIVATE'))
     await hosted.state.engine.run(hosted.state.db.claim())
-    assert seen['key'] == 'sk-ant-PRIVATE' and seen['model'] == 'opus' and seen['exists']
+    assert seen['key'] == 'sk-ant-PRIVATE' and seen['model'] == 'claude-opus-5-5' and seen['exists']
     assert seen['env']['ANTHROPIC_API_KEY'] == 'sk-ant-PRIVATE'
     assert seen['env']['HOME'] == seen['env']['CLAUDE_CONFIG_DIR'] == seen['home']
     assert not os.path.exists(seen['home']) and hosted.state.settings.claude_home == ''
@@ -185,3 +194,43 @@ def test_onshape_keys_stay_in_the_browser(hosted, monkeypatch):
     assert status['configured'] and status['access_key_hint'] == '…-123'
     assert client.post('/api/integrations/onshape/test', headers=headers).get_json()['user']['name'] == 'Ada Lovelace'
     assert client.post('/api/integrations/onshape/test').status_code == 422
+
+
+def test_a_site_key_connects_every_browser_to_gpt_6_1_terra(site):
+    s = site.state.settings
+    assert (s.provider, s.model, s.anthropic_api_key) == ('openai', 'gpt-6.1-terra', '')
+    client = site.test_client()
+    caps = client.get('/api/capabilities').get_json()
+    assert (caps['provider'], caps['model'], caps['connection_source']) == ('openai', 'gpt-6.1-terra', 'site')
+    overview = client.get('/api/integrations/model').get_json()
+    assert overview['active']['source'] == 'site' and overview['active']['model'] == 'gpt-6.1-terra'
+    openai = next(p for p in overview['providers'] if p['id'] == 'openai')
+    assert openai['site_key'] and openai['model'] == 'gpt-6.1-terra'
+    assert [m['name'] for m in openai['models']] == ['GPT-6 Astra', 'GPT-6.1 Sol', 'GPT-6.1 Terra']
+    listed = client.get('/api/integrations/model/models', headers=browser('openai', 'gpt-6.1-sol')).get_json()
+    assert listed['model'] == 'gpt-6.1-sol' and [m['id'] for m in listed['models']] == ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra']
+    # A browser that chose Claude with its own key still answers as Claude.
+    assert client.get('/api/capabilities', headers=browser('claude', 'claude-opus-5-5')).get_json()['connection_source'] == 'browser'
+    for response in (caps, overview, listed): assert 'SITE-SECRET' not in json.dumps(response)
+
+
+@pytest.mark.asyncio
+async def test_openai_chats_run_on_the_site_key_with_an_offered_model(site):
+    engine, db, client = site.state.engine, site.state.db, site.test_client()
+    engine.provider = recorder = Recorder(site.state.settings)
+    client.post('/api/tasks', json=PROMPT)
+    client.post('/api/tasks', json=PROMPT, headers=browser('openai', 'gpt-6.1-sol'))
+    # Any other model, or a key the browser sends, gives way to the site's.
+    client.post('/api/tasks', json=PROMPT, headers=browser('openai', 'gpt-x', 'KEY-ALICE-123'))
+    for _ in range(3): await engine.run(db.claim())
+    assert recorder.seen == [('openai','gpt-6.1-terra','SITE-SECRET-KEY')]*2 + [('openai','gpt-6.1-sol','SITE-SECRET-KEY')]*2 \
+        + [('openai','gpt-6.1-terra','SITE-SECRET-KEY')]*2
+    for path in Path(site.state.settings.data_dir).rglob('*'):
+        if path.is_file(): assert b'SITE-SECRET' not in path.read_bytes(), path
+
+
+def test_6b_model_picks_the_site_default_among_offered_models(tmp_path):
+    def default(model):
+        return create_app(Settings(data_dir=tmp_path, hosted=True, api_key='sk-site', model=model, api_token='',
+                                   worker_enabled=False)).state.settings.model
+    assert default('gpt-6.1-sol') == 'gpt-6.1-sol' and default('gpt-5') == 'gpt-6.1-terra'

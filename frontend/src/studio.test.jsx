@@ -102,7 +102,7 @@ describe("task workspace controls", () => {
     expect(screen.getByRole("tab", { name: "Conversation" })).toHaveFocus();
     await user.keyboard("{End}");
     expect(screen.getAllByRole("tab").at(-1)).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "Rename project" }));
+    await user.click(screen.getByRole("button", { name: "Rename chat" }));
     expect(setModal).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "rename", task }),
     );

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { Check, Printer } from "lucide-react";
 import { api } from "./lib.js";
-import { Dialog, ErrorNotice, Loading } from "./ui.jsx";
+import { ConfirmButton, Dialog, ErrorNotice, Loading } from "./ui.jsx";
 
 // Printer, process and filament used when 6B slices with Bambu Studio.
 export default function BambuSetup({ onClose, notify }) {
   const [status, setStatus] = useState(null),
     [options, setOptions] = useState(null),
+    // The printer the listed profiles belong to.
+    [profilesFor, setProfilesFor] = useState(null),
     [choice, setChoice] = useState(null),
     [error, setError] = useState(null),
     [busy, setBusy] = useState(false);
@@ -20,11 +22,16 @@ export default function BambuSetup({ onClose, notify }) {
   }, []);
   useEffect(() => {
     if (!choice?.machine) return;
+    // Save waits for this printer's profiles, and a slower answer for the previous
+    // printer is dropped, so profiles never pair with the wrong machine.
+    const controller = new AbortController();
     api(
       `/integrations/bambu/profiles?machine=${encodeURIComponent(choice.machine)}`,
+      { signal: controller.signal },
     )
       .then((o) => {
         setOptions(o);
+        setProfilesFor(choice.machine);
         // Keep compatible picks; otherwise fall back to the first compatible profile.
         setChoice((c) => ({
           ...c,
@@ -38,7 +45,8 @@ export default function BambuSetup({ onClose, notify }) {
               o.filaments[0],
         }));
       })
-      .catch(setError);
+      .catch((err) => !controller.signal.aborted && setError(err));
+    return () => controller.abort();
   }, [choice?.machine]);
   const save = async () => {
     setBusy(true);
@@ -149,20 +157,22 @@ export default function BambuSetup({ onClose, notify }) {
                 )}
                 <div className="form-actions">
                   {status.connected && (
-                    <button
-                      className="secondary"
+                    <ConfirmButton
+                      confirm="Disconnect?"
                       disabled={busy}
-                      onClick={disconnect}
+                      onConfirm={disconnect}
                     >
                       Disconnect
-                    </button>
+                    </ConfirmButton>
                   )}
                   <button className="secondary" onClick={onClose}>
                     Cancel
                   </button>
                   <button
                     className="primary"
-                    disabled={busy || !options}
+                    disabled={
+                      busy || !options || profilesFor !== choice?.machine
+                    }
                     onClick={save}
                   >
                     {busy

@@ -1,7 +1,8 @@
 export class APIError extends Error {
-  constructor(message, status) {
+  constructor(message, status, code) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -93,9 +94,36 @@ export async function api(path, { body, raw, ...options } = {}) {
         ? data.detail
         : `Request failed (${response.status}). Please try again.`,
       response.status,
+      data.code,
     );
   }
   return raw ? response : response.json();
+}
+
+// Requests for unrelated work in a prompt, ignoring code words when the code is a CAD script.
+function unrelated(prompt, rules) {
+  const hits = [...prompt.matchAll(new RegExp(rules.unrelated, "gi"))].map(
+    (match) => match[0],
+  );
+  if (!new RegExp(rules.cad_code, "i").test(prompt)) return hits.length > 0;
+  return hits.some((hit) => !new RegExp(rules.code, "i").test(hit));
+}
+
+// Why a new chat's prompt is not a CAD request, or null when it is one. The rules come from
+// the server (capabilities.cad_scope), which refuses the same prompts if this check is skipped.
+export function cadRefusal(prompt, rules) {
+  if (!rules) return null;
+  const test = (pattern) => new RegExp(pattern, "i").test(prompt);
+  if (!test(rules.term) && !test(rules.size)) return rules.refusal;
+  return unrelated(prompt, rules) ? rules.mixed : null;
+}
+
+// The same for a follow-up in a chat: only small talk and unrelated requests are refused,
+// since a follow-up need not name a part ("make it thicker").
+export function followUpRefusal(prompt, rules) {
+  if (!rules?.small_talk) return null;
+  if (new RegExp(rules.small_talk, "i").test(prompt)) return rules.refusal;
+  return unrelated(prompt, rules) ? rules.mixed : null;
 }
 
 export const statusLabel = (status) =>
@@ -117,11 +145,32 @@ export const date = (value) =>
     month: "short",
     day: "numeric",
   });
+// "claude-opus-5-5" -> "Opus 5.5", "claude-sonnet-4-5-20250929" -> "Sonnet 4.5", "gpt-5.1" -> "GPT-5.1",
+// "gpt-6.1-terra" -> "GPT-6.1 Terra".
+export function modelLabel(id) {
+  if (!id) return "";
+  if (id.startsWith("claude-")) {
+    const [family, ...version] = id
+      .slice(7)
+      .split("-")
+      .filter((part) => !/^\d{8}$/.test(part));
+    return `${family[0].toUpperCase()}${family.slice(1)} ${version.join(".")}`.trim();
+  }
+  const named = id.match(/^gpt-([\d.]+)-([a-z]+)$/i);
+  if (named)
+    return `GPT-${named[1]} ${named[2][0].toUpperCase()}${named[2].slice(1)}`;
+  return id.replace(/^gpt/i, "GPT");
+}
+
+// Runs reach a real model only through Claude Code or OpenAI; otherwise they fall back to the
+// offline workshop recipes.
+export const modelConnected = (cap) =>
+  cap?.provider === "claude" || cap?.provider === "openai";
 export const modeLabel = (cap) =>
   cap?.provider === "claude"
     ? "Claude Code"
     : cap?.provider === "openai"
-      ? cap.model
+      ? modelLabel(cap.model)
       : "Local workshop";
 export function latestArtifacts(items) {
   const map = new Map();

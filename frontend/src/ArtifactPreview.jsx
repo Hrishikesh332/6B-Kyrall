@@ -242,7 +242,7 @@ export default function ArtifactPreview({
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
     } finally {
       setDownloading(false);
     }
@@ -275,7 +275,7 @@ export default function ArtifactPreview({
       onClose();
       location.hash = `task=${encodeURIComponent(taskId)}`;
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
       return false;
     }
   };
@@ -677,7 +677,14 @@ export function MeshPreview({
     media.addEventListener("change", stop);
     return () => media.removeEventListener("change", stop);
   }, []);
-  useEffect(() => () => recorder.current?.stop(), []);
+  // Closing the preview or resetting the view abandons a recording; only the
+  // record button's own stop saves the video.
+  const abandonRecording = () => {
+    if (!recorder.current) return;
+    recorder.current.discard = true;
+    recorder.current.stop();
+  };
+  useEffect(() => abandonRecording, []);
   useEffect(() => {
     viewer.current?.update({ printCheck });
   }, [printCheck, mesh]);
@@ -701,7 +708,7 @@ export function MeshPreview({
       setRecording(false);
       setPlaying(false);
       viewer.current?.update({ background: null });
-      if (!chunks.length) return;
+      if (!chunks.length || media.discard) return;
       const url = URL.createObjectURL(new Blob(chunks, { type: format[0] })),
         link = document.createElement("a");
       link.href = url;
@@ -722,7 +729,7 @@ export function MeshPreview({
     viewer.current?.focus(picked);
   };
   const reset = () => {
-    recorder.current?.stop();
+    abandonRecording();
     setPlaying(false);
     setProgress(0);
     setExplode(0);

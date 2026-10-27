@@ -11,12 +11,13 @@ import {
   MODEL_CONNECTION,
   api,
   forgetConnection,
+  modelLabel,
   rememberedConnection,
   saveConnection,
   savedConnection,
 } from "./lib.js";
 import ProviderLogo from "./ProviderLogo.jsx";
-import { Dialog, ErrorNotice, Loading } from "./ui.jsx";
+import { ConfirmButton, Dialog, ErrorNotice, Loading } from "./ui.jsx";
 
 // Pick which model service runs tasks: Claude Code, the workshop or the OpenAI API.
 export default function ModelConnection({
@@ -24,6 +25,7 @@ export default function ModelConnection({
   onChanged,
   notify,
   initialProvider,
+  signInError,
 }) {
   const [overview, setOverview] = useState(null),
     [error, setError] = useState(null),
@@ -84,18 +86,33 @@ export default function ModelConnection({
             </div>
             {provider &&
               (overview.hosted ? (
-                <>
-                  {provider.id === "openai" && (
-                    <ChatGPTPlan
-                      onConnected={async (next) => {
-                        setOverview(next);
-                        await onChanged?.();
-                        notify?.(
-                          `${next.active.name} is now running your tasks.`,
-                        );
-                      }}
-                    />
-                  )}
+                // On the web, OpenAI runs on this site's own key when it has one, or else
+                // only through ChatGPT's sign-in.
+                provider.site_key ? (
+                  <SiteKeySetup
+                    provider={provider}
+                    inUse={overview.active.source === "site"}
+                    onConnected={async (next) => {
+                      setOverview(next);
+                      await onChanged?.();
+                      notify?.(
+                        `${next.active.name} is now running your chats.`,
+                      );
+                    }}
+                    onClose={onClose}
+                  />
+                ) : provider.id === "openai" ? (
+                  <ChatGPTPlan
+                    signInError={signInError}
+                    onConnected={async (next) => {
+                      setOverview(next);
+                      await onChanged?.();
+                      notify?.(
+                        `${next.active.name} is now running your chats.`,
+                      );
+                    }}
+                  />
+                ) : (
                   <BrowserKeySetup
                     key={provider.id}
                     provider={provider}
@@ -103,12 +120,12 @@ export default function ModelConnection({
                       setOverview(next);
                       await onChanged?.();
                       notify?.(
-                        `${next.active.name} is now running your tasks.`,
+                        `${next.active.name} is now running your chats.`,
                       );
                     }}
                     onClose={onClose}
                   />
-                </>
+                )
               ) : (
                 <ProviderSetup
                   key={provider.id}
@@ -116,7 +133,7 @@ export default function ModelConnection({
                   onConnected={async (next) => {
                     setOverview(next);
                     await onChanged?.();
-                    notify?.(`${next.active.name} is now running your tasks.`);
+                    notify?.(`${next.active.name} is now running your chats.`);
                   }}
                   onKeyRemoved={setOverview}
                   onClose={onClose}
@@ -140,17 +157,19 @@ function ActiveSummary({ active }) {
         <span>
           {active.provider === "workshop"
             ? "No model"
-            : active.model || "Account default model"}{" "}
+            : modelLabel(active.model) || "Account default model"}{" "}
           ·{" "}
-          {active.source === "browser"
-            ? active.provider === "workshop"
-              ? "no key connected in this browser"
-              : active.plan
-                ? "signed in with ChatGPT"
-                : "your key, saved in this browser"
-            : active.source === "workspace"
-              ? "chosen in this workspace"
-              : "from backend/.env"}
+          {active.source === "site"
+            ? "this site’s OpenAI API key"
+            : active.source === "browser"
+              ? active.provider === "workshop"
+                ? "no key connected in this browser"
+                : active.plan
+                  ? "signed in with ChatGPT"
+                  : "your key, saved in this browser"
+              : active.source === "workspace"
+                ? "chosen in this workspace"
+                : "from backend/.env"}
         </span>
       </div>
       <span className="connection-status is-connected">
@@ -191,7 +210,9 @@ function Command({ text }) {
 function ProviderSetup({ provider, onConnected, onKeyRemoved, onClose }) {
   const [check, setCheck] = useState(null),
     [busy, setBusy] = useState(""),
-    [model, setModel] = useState(provider.model || ""),
+    [model, setModel] = useState(
+      provider.model || provider.models?.[0]?.id || "",
+    ),
     [apiKey, setApiKey] = useState(""),
     [models, setModels] = useState(provider.models || null);
   const run = async (kind, work) => {
@@ -227,13 +248,12 @@ function ProviderSetup({ provider, onConnected, onKeyRemoved, onClose }) {
       setCheck(next.check);
       await onConnected(next);
     });
-  const canChooseModel = provider.id === "claude";
+  const canChooseModel = !!provider.models?.length;
   return (
     <div className="provider-setup">
       {provider.id === "openai" ? (
         <p className="setup-line">
-          Set <code>OPENAI_API_KEY</code> and <code>6B_MODEL</code> in{" "}
-          <code>backend/.env</code>.
+          Set <code>OPENAI_API_KEY</code> in <code>backend/.env</code>.
         </p>
       ) : !provider.installed ? (
         <p className="setup-line">
@@ -275,11 +295,11 @@ function ProviderSetup({ provider, onConnected, onKeyRemoved, onClose }) {
         (provider.api_key_saved ? (
           <p className="connect-note">
             <KeyRound size={13} /> API key saved.{" "}
-            <button
-              type="button"
+            <ConfirmButton
               className="text-button danger-text"
+              confirm="Remove the saved key?"
               disabled={!!busy}
-              onClick={() =>
+              onConfirm={() =>
                 run("forget", async () => {
                   onKeyRemoved(
                     await api("/integrations/model/anthropic-key", {
@@ -291,7 +311,7 @@ function ProviderSetup({ provider, onConnected, onKeyRemoved, onClose }) {
               }
             >
               Remove
-            </button>
+            </ConfirmButton>
           </p>
         ) : (
           !provider.api_key_from_environment && (
@@ -351,7 +371,7 @@ function ProviderSetup({ provider, onConnected, onKeyRemoved, onClose }) {
 
 // Hosted 6B: Sign in with ChatGPT pays for runs with the user's ChatGPT plan. The tokens
 // stay on the server behind an HttpOnly cookie; this browser only remembers the choice.
-function ChatGPTPlan({ onConnected }) {
+function ChatGPTPlan({ onConnected, signInError }) {
   const saved = savedConnection(MODEL_CONNECTION);
   const [status, setStatus] = useState(null),
     [models, setModels] = useState(null),
@@ -385,15 +405,26 @@ function ChatGPTPlan({ onConnected }) {
     void load();
   }, []);
   const inUse = saved?.provider === "chatgpt";
-  if (!status) return null;
+  if (!status)
+    return message ? (
+      <ErrorNotice error={message.text} retry={load} />
+    ) : (
+      <Loading>Checking ChatGPT sign-in…</Loading>
+    );
   return (
     <section className="provider-setup chatgpt-plan" aria-label="ChatGPT plan">
       {!status.available ? (
         <p className="setup-line">{status.reason}</p>
       ) : !status.signed_in ? (
         <>
+          {signInError && (
+            <ErrorNotice
+              error={`Sign in with ChatGPT did not finish: ${signInError.slice(0, 300)}`}
+            />
+          )}
           <p className="setup-line">
-            Use your ChatGPT Plus or Pro plan instead of an API key.
+            Sign in with your ChatGPT Plus or Pro plan to run GPT-6 Astra,
+            GPT-6.1 Sol or GPT-6.1 Terra.
           </p>
           <div className="form-actions">
             <button
@@ -425,8 +456,12 @@ function ChatGPTPlan({ onConnected }) {
           {!status.plan_usage ? (
             <p className="connection-check" role="status">
               Using your ChatGPT plan was not allowed during sign-in. Sign out
-              and continue with ChatGPT again to allow it, or use an API key
-              below.
+              and continue with ChatGPT again to allow it.
+            </p>
+          ) : models && !models.length ? (
+            <p className="connection-check" role="status">
+              Your ChatGPT plan does not offer GPT-6 Astra, GPT-6.1 Sol or
+              GPT-6.1 Terra.
             </p>
           ) : (
             <label className="export-field">
@@ -441,11 +476,10 @@ function ChatGPTPlan({ onConnected }) {
             </label>
           )}
           <div className="form-actions">
-            <button
-              type="button"
-              className="secondary danger-text"
+            <ConfirmButton
+              confirm="Sign out of ChatGPT?"
               disabled={!!busy}
-              onClick={() =>
+              onConfirm={() =>
                 run("signout", async () => {
                   const next = await api("/integrations/chatgpt", {
                     method: "DELETE",
@@ -458,7 +492,7 @@ function ChatGPTPlan({ onConnected }) {
               }
             >
               <Unplug size={14} /> Sign out
-            </button>
+            </ConfirmButton>
             {status.plan_usage && (
               <button
                 type="button"
@@ -490,10 +524,60 @@ function ChatGPTPlan({ onConnected }) {
           {message.text}
         </p>
       )}
-      <p className="connect-note">
-        <KeyRound size={13} /> Or use an OpenAI API key:
-      </p>
     </section>
+  );
+}
+
+// Hosted with OPENAI_API_KEY set: this site's own key runs OpenAI chats, so the browser
+// keeps only the chosen model. Without a choice it runs on the site's default.
+function SiteKeySetup({ provider, inUse, onConnected, onClose }) {
+  const [model, setModel] = useState(provider.model),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(null);
+  const use = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      saveConnection(MODEL_CONNECTION, { provider: "openai", model }, true);
+      await onConnected(await api("/integrations/model"));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="provider-setup">
+      <p className="setup-line">Runs on this site’s OpenAI API key.</p>
+      <label className="export-field">
+        Model
+        <select value={model} onChange={(e) => setModel(e.target.value)}>
+          {provider.models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {error && (
+        <p className="connection-check" role="status">
+          {error}
+        </p>
+      )}
+      <div className="form-actions">
+        <button type="button" className="secondary" onClick={onClose}>
+          Done
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={busy || (inUse && model === provider.model)}
+          onClick={use}
+        >
+          {inUse ? "Save changes" : `Use ${provider.name}`}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -510,7 +594,12 @@ const KEY_PAGES = {
 function BrowserKeySetup({ provider, onConnected, onClose }) {
   const saved = savedConnection(MODEL_CONNECTION);
   const mine = saved?.provider === provider.id ? saved : null;
-  const [model, setModel] = useState(mine?.model ?? ""),
+  // Claude offers a fixed list; start on the saved model or the first one.
+  const [model, setModel] = useState(
+      mine?.model ||
+        (provider.id === "claude" ? provider.models?.[0]?.id : "") ||
+        "",
+    ),
     [apiKey, setApiKey] = useState(""),
     [remember, setRemember] = useState(rememberedConnection(MODEL_CONNECTION)),
     [check, setCheck] = useState(null),
@@ -620,14 +709,13 @@ function BrowserKeySetup({ provider, onConnected, onClose }) {
           Done
         </button>
         {mine && (
-          <button
-            type="button"
-            className="secondary danger-text"
+          <ConfirmButton
+            confirm="Remove the key from this browser?"
             disabled={!!busy}
-            onClick={disconnect}
+            onConfirm={disconnect}
           >
             <Unplug size={14} /> Remove key
-          </button>
+          </ConfirmButton>
         )}
         <button
           type="button"

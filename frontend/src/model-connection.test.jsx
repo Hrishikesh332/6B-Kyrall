@@ -97,7 +97,7 @@ describe("model connection", () => {
     const put = calls.find(([, method]) => method === "PUT");
     expect(JSON.parse(put[2])).toEqual({ provider: "claude", model: "sonnet" });
     expect(notify).toHaveBeenCalledWith(
-      "Claude Code is now running your tasks.",
+      "Claude Code is now running your chats.",
     );
     expect(
       screen.getByText("chosen in this workspace", { exact: false }),
@@ -154,5 +154,27 @@ describe("model connection", () => {
     expect(
       await screen.findByRole("radio", { name: /Claude Code/ }),
     ).toHaveAttribute("aria-checked", "true");
+  });
+  it("shows a failed ChatGPT sign-in inside the dialog it reopens", () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/?chatgpt_error=State%20mismatch#integrations",
+    );
+    const setModal = vi.fn();
+    render(
+      <IntegrationsPage
+        cap={{ provider: "claude", integrations: [] }}
+        setModal={setModal}
+      />,
+    );
+    expect(setModal).toHaveBeenCalledWith({
+      kind: "model",
+      provider: "openai",
+      signInError: "State mismatch",
+    });
+    // Not left on the page behind the dialog, and the URL is tidied.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(window.location.search).toBe("");
   });
 });
