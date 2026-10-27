@@ -21,7 +21,9 @@ class WorkerRuntime:
         async def main():
             self.loop = asyncio.get_running_loop()
             self.stop_event = asyncio.Event()
-            jobs = [asyncio.create_task(self.engine.serve()), asyncio.create_task(self.scheduler(self.stop_event))]
+            # Several loops let one long run not hold up everyone else (6B_WORKERS).
+            jobs = [asyncio.create_task(self.engine.serve()) for _ in range(self.engine.settings.workers)]
+            jobs.append(asyncio.create_task(self.scheduler(self.stop_event)))
             self.ready.set()
             await self.stop_event.wait()
             self.engine.shutdown.set()

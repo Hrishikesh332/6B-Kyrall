@@ -162,7 +162,7 @@ class DB:
         self.event(c, task_id, rid, "run.queued", {"status": "queued"})
         return rid
 
-    def create_task(self, data, key=None):
+    def create_task(self, data, key=None, task_id=None):
         request_hash=hashlib.sha256(encode(data.model_dump()).encode()).hexdigest()
         with self.transaction() as c:
             if key:
@@ -173,7 +173,7 @@ class DB:
                     return old[0]
             if data.project_id and not c.execute("SELECT 1 FROM projects WHERE id=?", (data.project_id,)).fetchone():
                 raise NotFound("Project not found")
-            tid, now = uid(), time.time()
+            tid, now = task_id or uid(), time.time()
             title = data.title or " ".join(data.prompt.split())[:76]
             c.execute("INSERT INTO tasks(id,title,project_id,context_scope,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (tid, title, data.project_id, data.context_scope, "queued", now, now))
             rid = self.queue_run(c, tid)

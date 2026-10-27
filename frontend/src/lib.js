@@ -5,10 +5,78 @@ export class APIError extends Error {
   }
 }
 
+// Hosted 6B: each browser keeps its own model and Onshape keys. They live only in this
+// browser (this tab unless the user chose to remember them) and are sent as headers.
+export const MODEL_CONNECTION = "6b-model-connection";
+export const ONSHAPE_CONNECTION = "6b-onshape-connection";
+const stores = () => {
+  try {
+    return [sessionStorage, localStorage];
+  } catch {
+    return [];
+  }
+};
+export function savedConnection(name) {
+  for (const store of stores()) {
+    try {
+      const value = store.getItem(name);
+      if (value) return JSON.parse(value);
+    } catch {
+      // Unreadable or blocked storage counts as not connected.
+    }
+  }
+  return null;
+}
+export function saveConnection(name, value, remember) {
+  forgetConnection(name);
+  const [session, local] = stores();
+  (remember ? local : session)?.setItem(name, JSON.stringify(value));
+}
+export function forgetConnection(name) {
+  for (const store of stores()) {
+    try {
+      store.removeItem(name);
+    } catch {
+      // Nothing stored there.
+    }
+  }
+}
+export const rememberedConnection = (name) => {
+  try {
+    return !!localStorage.getItem(name);
+  } catch {
+    return false;
+  }
+};
+// Requests that queue a model run; only these carry the API key itself.
+const RUN_REQUEST =
+  /^\/tasks(\/[^/]+\/(messages|retry|approvals\/[^/]+|questions\/[^/]+\/answer))?$/;
+export function connectionHeaders(path, method = "GET") {
+  const headers = {};
+  const model = savedConnection(MODEL_CONNECTION);
+  if (model?.provider) {
+    headers["X-6B-Provider"] = model.provider;
+    if (model.model) headers["X-6B-Model"] = model.model;
+    if (model.key && method !== "GET" && RUN_REQUEST.test(path.split("?")[0]))
+      headers["X-6B-Key"] = model.key;
+  }
+  const onshape = savedConnection(ONSHAPE_CONNECTION);
+  if (onshape && /^\/(onshape\/|integrations\/onshape)/.test(path)) {
+    headers["X-6B-Onshape-Url"] = onshape.base_url;
+    headers["X-6B-Onshape-Access"] = onshape.access_key;
+    headers["X-6B-Onshape-Secret"] = onshape.secret_key;
+  }
+  return headers;
+}
+
 export async function api(path, { body, raw, ...options } = {}) {
   const headers = new Headers(options.headers);
   const token = sessionStorage.getItem("6b-token");
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  for (const [name, value] of Object.entries(
+    connectionHeaders(path, (options.method || "GET").toUpperCase()),
+  ))
+    headers.set(name, value);
   if (body && !(body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(body);
@@ -16,8 +84,7 @@ export async function api(path, { body, raw, ...options } = {}) {
   const response = await fetch(`/api${path}`, { ...options, headers, body });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    if (response.status === 401)
-      window.dispatchEvent(new Event("6b:unlock"));
+    if (response.status === 401) window.dispatchEvent(new Event("6b:unlock"));
     throw new APIError(
       typeof data.detail === "string"
         ? data.detail

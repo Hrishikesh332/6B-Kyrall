@@ -1,6 +1,20 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, Check, Copy, KeyRound, RefreshCw } from "lucide-react";
-import { api } from "./lib.js";
+import {
+  ArrowUpRight,
+  Check,
+  Copy,
+  KeyRound,
+  RefreshCw,
+  Unplug,
+} from "lucide-react";
+import {
+  MODEL_CONNECTION,
+  api,
+  forgetConnection,
+  rememberedConnection,
+  saveConnection,
+  savedConnection,
+} from "./lib.js";
 import ProviderLogo from "./ProviderLogo.jsx";
 import { Dialog, ErrorNotice, Loading } from "./ui.jsx";
 
@@ -68,19 +82,31 @@ export default function ModelConnection({
                   );
                 })}
             </div>
-            {provider && (
-              <ProviderSetup
-                key={provider.id}
-                provider={provider}
-                onConnected={async (next) => {
-                  setOverview(next);
-                  await onChanged?.();
-                  notify?.(`${next.active.name} is now running your tasks.`);
-                }}
-                onKeyRemoved={setOverview}
-                onClose={onClose}
-              />
-            )}
+            {provider &&
+              (overview.hosted ? (
+                <BrowserKeySetup
+                  key={provider.id}
+                  provider={provider}
+                  onConnected={async (next) => {
+                    setOverview(next);
+                    await onChanged?.();
+                    notify?.(`${next.active.name} is now running your tasks.`);
+                  }}
+                  onClose={onClose}
+                />
+              ) : (
+                <ProviderSetup
+                  key={provider.id}
+                  provider={provider}
+                  onConnected={async (next) => {
+                    setOverview(next);
+                    await onChanged?.();
+                    notify?.(`${next.active.name} is now running your tasks.`);
+                  }}
+                  onKeyRemoved={setOverview}
+                  onClose={onClose}
+                />
+              ))}
           </>
         )}
       </div>
@@ -101,9 +127,13 @@ function ActiveSummary({ active }) {
             ? "No model"
             : active.model || "Account default model"}{" "}
           ·{" "}
-          {active.source === "workspace"
-            ? "chosen in this workspace"
-            : "from backend/.env"}
+          {active.source === "browser"
+            ? active.provider === "workshop"
+              ? "no key connected in this browser"
+              : "your key, saved in this browser"
+            : active.source === "workspace"
+              ? "chosen in this workspace"
+              : "from backend/.env"}
         </span>
       </div>
       <span className="connection-status is-connected">
@@ -294,6 +324,166 @@ function ProviderSetup({ provider, onConnected, onKeyRemoved, onClose }) {
           {busy === "connect"
             ? "Connecting…"
             : provider.active
+              ? "Save changes"
+              : `Use ${provider.name}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const KEY_PAGES = {
+  claude: [
+    "Anthropic API key",
+    "sk-ant-…",
+    "https://console.anthropic.com/settings/keys",
+  ],
+  openai: ["OpenAI API key", "sk-…", "https://platform.openai.com/api-keys"],
+};
+
+// Hosted 6B: the key is checked live, then kept only in this browser.
+function BrowserKeySetup({ provider, onConnected, onClose }) {
+  const saved = savedConnection(MODEL_CONNECTION);
+  const mine = saved?.provider === provider.id ? saved : null;
+  const [model, setModel] = useState(mine?.model ?? ""),
+    [apiKey, setApiKey] = useState(""),
+    [remember, setRemember] = useState(rememberedConnection(MODEL_CONNECTION)),
+    [check, setCheck] = useState(null),
+    [busy, setBusy] = useState("");
+  const [label, placeholder, keysPage] = KEY_PAGES[provider.id];
+  const key = apiKey.trim() || mine?.key || "";
+  const run = async (kind, work) => {
+    setBusy(kind);
+    try {
+      await work();
+    } catch (err) {
+      setCheck({ ok: false, message: err.message });
+    } finally {
+      setBusy("");
+    }
+  };
+  const verify = async () => {
+    const result = await api("/integrations/model/check", {
+      method: "POST",
+      body: { provider: provider.id, model: model.trim(), api_key: key },
+    });
+    setCheck(result);
+    return result.ok;
+  };
+  const connect = () =>
+    run("connect", async () => {
+      if (!(await verify())) return;
+      saveConnection(
+        MODEL_CONNECTION,
+        { provider: provider.id, model: model.trim(), key },
+        remember,
+      );
+      setApiKey("");
+      await onConnected(await api("/integrations/model"));
+    });
+  const disconnect = () =>
+    run("disconnect", async () => {
+      forgetConnection(MODEL_CONNECTION);
+      setCheck({ ok: true, message: "Key removed from this browser." });
+      await onConnected(await api("/integrations/model"));
+    });
+  return (
+    <div className="provider-setup">
+      <p className="setup-line">
+        Use your own key.{" "}
+        <a href={keysPage} target="_blank" rel="noreferrer">
+          Create a key <ArrowUpRight size={12} />
+        </a>
+      </p>
+      <label className="export-field">
+        {label}
+        <input
+          type="password"
+          aria-label={label}
+          value={apiKey}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={
+            mine?.key
+              ? `Saved in this browser · …${mine.key.slice(-4)}`
+              : placeholder
+          }
+          onChange={(e) => setApiKey(e.target.value)}
+        />
+      </label>
+      <label className="export-field">
+        Model
+        {provider.id === "claude" ? (
+          <select value={model} onChange={(e) => setModel(e.target.value)}>
+            {(provider.models || []).map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            value={model}
+            required
+            placeholder="Responses API model, e.g. gpt-5"
+            maxLength={120}
+            spellCheck={false}
+            onChange={(e) => setModel(e.target.value)}
+          />
+        )}
+      </label>
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={remember}
+          onChange={(e) => setRemember(e.target.checked)}
+        />
+        Remember on this device (otherwise cleared when this tab closes)
+      </label>
+      <p className="connect-note">
+        <KeyRound size={13} /> Your key stays in this browser. 6B sends it only
+        when a task runs and holds it in server memory until that run ends; it
+        is never saved on the server or shown to other visitors.
+      </p>
+      {check && (
+        <p className={`connection-check${check.ok ? " ok" : ""}`} role="status">
+          {check.message}
+        </p>
+      )}
+      <div className="form-actions">
+        <button type="button" className="secondary" onClick={onClose}>
+          Done
+        </button>
+        {mine && (
+          <button
+            type="button"
+            className="secondary danger-text"
+            disabled={!!busy}
+            onClick={disconnect}
+          >
+            <Unplug size={14} /> Remove key
+          </button>
+        )}
+        <button
+          type="button"
+          className="secondary"
+          disabled={!!busy || !key}
+          onClick={() => run("check", verify)}
+        >
+          <RefreshCw size={14} />
+          {busy === "check" ? "Checking…" : "Check"}
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={
+            !!busy || !key || (provider.id === "openai" && !model.trim())
+          }
+          onClick={connect}
+        >
+          {busy === "connect"
+            ? "Checking key…"
+            : mine
               ? "Save changes"
               : `Use ${provider.name}`}
         </button>

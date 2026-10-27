@@ -247,3 +247,23 @@ def test_usage_counts_each_response_once_and_budgets_fresh_tokens():
     assert state == {'fresh': 132, 'total': 1032}
     count_usage(state, counted, AssistantMessage(content=[], model='m', usage=usage, message_id='msg_2'))
     assert state == {'fresh': 232, 'total': 2032}
+
+
+def test_saved_context_drops_duplicates_and_trims_instead_of_failing(app, task, monkeypatch):
+    import json
+    from app import agent_context as ac
+    rows = [{'name':'list_artifacts','result':{'artifacts':['x']*10}}, {'name':'build_cad_script','result':{'log':'y'*9000}},
+            {'name':'activity','result':{'ok':True}}]
+    out = ac._recent_results(rows)
+    assert out[0]['result'].startswith('Listed artifacts') and 'omitted' in out[1]['result'] and out[2] == rows[2]
+    versions = [{'id':'2','name':'g.cad.py','version':2,'metadata':{'kind':'cad_script','parameters':{'a':1}}},
+                {'id':'1','name':'g.cad.py','version':1,'metadata':{'kind':'cad_script','parameters':{'a':1},'build_id':'b1'}}]
+    index = ac._artifact_index(versions)
+    assert index[0] == versions[0] and index[1]['metadata'] == {'kind':'cad_script','build_id':'b1'}
+    run = app.state.db.claim()
+    full = ac.task_context(app.state.engine, run)
+    monkeypatch.setattr(ac, 'CONTEXT_LIMIT', len(full) - 1)
+    assert 'recent_tool_results' not in json.loads(ac.task_context(app.state.engine, run))
+    monkeypatch.setattr(ac, 'CONTEXT_LIMIT', 10)
+    with pytest.raises(ValueError, match='context budget'):
+        ac.task_context(app.state.engine, run)

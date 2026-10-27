@@ -1,9 +1,10 @@
-# Root: only track backend/ and frontend/ (plus this file).
+# Root: only track backend/, frontend/, and chat-history/ (plus this file).
 # Everything else at the top level stays local.
 /*
 !/.gitignore
 !/backend/
 !/frontend/
+!/chat-history/
 
 # OS / editor noise (any depth)
 .DS_Store

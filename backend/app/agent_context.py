@@ -16,6 +16,37 @@ def compact_result(value):
     return result
 
 
+CONTEXT_LIMIT = 180000
+RESULT_LIMIT = 8000
+
+
+def _recent_results(rows):
+    # Results already in the context (the artifact list) or too large to replay are summarised;
+    # the full result stays in the tool history and can be fetched again.
+    out = []
+    for row in rows:
+        size = len(encode(row['result']))
+        if row['name'] == 'list_artifacts':
+            out.append({'name':row['name'],'result':'Listed artifacts; see context.artifacts for the current list.'})
+        elif size > RESULT_LIMIT:
+            out.append({'name':row['name'],'result':{'omitted':f'{size} characters; call the tool again for the full result'}})
+        else:
+            out.append(row)
+    return out
+
+
+def _artifact_index(rows):
+    # Newest first: the latest version of each file keeps its metadata, older versions only identity and kind.
+    seen, out = set(), []
+    for row in rows:
+        if row['name'] in seen:
+            meta = row['metadata'] or {}
+            out.append({**row, 'metadata':{k:meta[k] for k in ('kind','build_id') if k in meta}})
+        else:
+            seen.add(row['name']); out.append(row)
+    return out
+
+
 def task_context(engine, run):
     db, tid = engine.db, run['task_id']
     task = db.require_task(tid)
@@ -29,12 +60,12 @@ def task_context(engine, run):
     from .rules import agent_view
     rules = agent_view(db, tid)
     if rules: context['rules'] = rules
-    context['artifacts'] = db.all('SELECT id,name,version,metadata FROM artifacts WHERE task_id=? ORDER BY created_at DESC LIMIT 60',(tid,))
+    context['artifacts'] = _artifact_index(db.all('SELECT id,name,version,metadata FROM artifacts WHERE task_id=? ORDER BY created_at DESC LIMIT 60',(tid,)))
     from .image_intake import latest_image_set
     image_set, capture = latest_image_set(db,engine.runner.store,tid)
     if image_set:
         context['object_image_set'] = {'artifact_id':image_set['id'],**capture}
-    context['recent_tool_results'] = compact_result(db.all('SELECT name,result FROM tool_calls WHERE run_id=? AND status=? ORDER BY started_at DESC LIMIT 12',(run['id'],'completed')))
+    context['recent_tool_results'] = _recent_results(compact_result(db.all('SELECT name,result FROM tool_calls WHERE run_id=? AND status=? ORDER BY started_at DESC LIMIT 12',(run['id'],'completed'))))
     from .audit import task_audit
     evidence=task_audit(db,tid)
     context['decisions']=[d for d in evidence['decisions'] if not d['superseded']][-20:]
@@ -49,5 +80,11 @@ def task_context(engine, run):
             if path.is_relative_to(root) and path.suffix.lower() in ('.txt','.md','.json','.csv'):
                 context['reference_excerpts'].append({'name':file['name'],'text':path.read_text(errors='replace')[:8000],'trust':'untrusted reference'})
     text=encode(context)
-    if len(text)>180000: raise ValueError('Saved context exceeds the model context budget')
+    # A long task should keep running: shed the most replaceable context before giving up.
+    for trim in (lambda: context.pop('recent_tool_results',None),
+                 lambda: context.update(artifacts=context['artifacts'][:20]),
+                 lambda: context.update(conversation=context['conversation'][-10:], approvals=context['approvals'][-2:])):
+        if len(text)<=CONTEXT_LIMIT: break
+        trim(); text=encode(context)
+    if len(text)>CONTEXT_LIMIT: raise ValueError('Saved context exceeds the model context budget')
     return text

@@ -46,6 +46,9 @@ def claude_env(settings):
     env.pop('ANTHROPIC_API_KEY',None)
     if settings.anthropic_api_key: env['ANTHROPIC_API_KEY'] = settings.anthropic_api_key
     elif 'ANTHROPIC_API_KEY' in os.environ: env['ANTHROPIC_API_KEY'] = ''
+    if settings.claude_home:
+        # Hosted: a private, throwaway home so no login or CLI state is shared between runs.
+        env['HOME'] = env['CLAUDE_CONFIG_DIR'] = settings.claude_home
     return env
 
 

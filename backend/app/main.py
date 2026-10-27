@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import time
 from urllib.parse import urlparse
-from flask import request, jsonify, Response, send_from_directory
+from flask import g, request, jsonify, Response, send_from_directory
 from werkzeug.datastructures import FileStorage
 from .api import API, HTTPException, FileResponse, File, Header, Query
 from .runtime import WorkerRuntime
@@ -25,7 +25,9 @@ from .image_intake import ImageSetInput, normalize_image, save_image_set
 from .simulation_export import SimulationExportInput, export_scene
 from .mesh_samples import MeshSamples
 from .connections import NAMES, ConnectionCheck, ConnectionInput, Connections
-from .onshape import CredentialStore, OnshapeClient, OnshapeCredentials, OnshapeError, OnshapeExport, OnshapeImport, export_step, import_element, ID as ONSHAPE_ID
+from .config import CONNECTION
+from .credentials import from_headers, verify
+from .onshape import BrowserCredentials, CredentialStore, OnshapeClient, OnshapeCredentials, OnshapeError, OnshapeExport, OnshapeImport, export_step, import_element, ID as ONSHAPE_ID
 
 
 def focused_message(store, task_id, focus, content):
@@ -96,7 +98,8 @@ def create_app(settings=None,provider=None):
     app=API()
     app.config['TRUSTED_HOSTS']=[*app.config['TRUSTED_HOSTS'],*settings.allowed_hosts]
     app.state.db,app.state.engine,app.state.store,app.state.settings=db,engine,store,settings
-    app.state.runtime=WorkerRuntime(engine,lambda stop:scheduler(db,stop))
+    # Hosted schedules would fire with no browser present to supply a key, so none run.
+    app.state.runtime=WorkerRuntime(engine,lambda stop:stop.wait() if settings.hosted else scheduler(db,stop))
 
     @app.before_request
     def local_boundary():
@@ -107,6 +110,24 @@ def create_app(settings=None,provider=None):
             if origin and origin != request.host_url.rstrip('/'):
                 return jsonify(detail='Cross-origin API requests are not allowed'),403
         if settings.worker_enabled: app.state.runtime.start()
+
+    @app.before_request
+    def browser_connection():
+        # Hosted: answer as this browser's provider and model (never its key) for the request.
+        if settings.hosted and request.path.startswith('/api/'):
+            g.connection_token=CONNECTION.set(from_headers(request.headers).fields(with_key=False))
+
+    @app.teardown_request
+    def forget_browser_connection(_exc):
+        token=g.pop('connection_token',None)
+        if token is not None: CONNECTION.reset(token)
+
+    def keep_key(task_id):
+        """Hosted: hold this browser's connection, with its key, for the task's next run."""
+        if settings.hosted: engine.keys.put(task_id,from_headers(request.headers,with_key=True))
+
+    def hosted_off(feature):
+        if settings.hosted: raise HTTPException(403,f'{feature} are off on hosted 6B: they would run without your browser’s own model key.')
 
     @app.after_request
     def response_headers(response):
@@ -142,10 +163,14 @@ def create_app(settings=None,provider=None):
     def simulation_export(task_id:str,data:SimulationExportInput):
         return export_scene(db,store,task_id,None,data)
 
-    onshape_keys=CredentialStore(settings.data_dir)
+    saved_onshape_keys=CredentialStore(settings.data_dir)
+    def onshape_keys():
+        # Hosted: the keys this browser sent with the request; locally: the saved workspace keys.
+        return BrowserCredentials(request.headers) if settings.hosted else saved_onshape_keys
     def onshape():
-        return OnshapeClient.from_store(onshape_keys,app.state.onshape_transport)
+        return OnshapeClient.from_store(onshape_keys(),app.state.onshape_transport)
     app.state.onshape_transport=None
+    app.state.model_transport=None
     app.register_error_handler(OnshapeError,lambda exc:(jsonify(detail=str(exc)),502 if 'reached' in str(exc) else 422))
 
     @app.get('/api/integrations/model')
@@ -153,46 +178,52 @@ def create_app(settings=None,provider=None):
 
     @app.post('/api/integrations/model/check')
     def model_connection_check(data:ConnectionCheck):
+        if settings.hosted: return asyncio.run(verify(data.provider,data.model,data.api_key,app.state.model_transport))
         return asyncio.run(connections.check(data.provider))
 
     @app.put('/api/integrations/model')
     def model_connect(data:ConnectionInput):
-        busy=engine.active_run or db.one("SELECT 1 FROM runs WHERE status='running'")
+        hosted_off('Server-wide model connections')
+        busy=engine.active_runs or db.one("SELECT 1 FROM runs WHERE status='running'")
         return connections.connect(data,bool(busy))
 
     @app.delete('/api/integrations/model/anthropic-key')
     def model_forget_key():
+        hosted_off('Server-wide model connections')
         if connections.defaults['anthropic_api_key']:
             raise Conflict('ANTHROPIC_API_KEY is set in the environment; remove it there')
         return connections.forget_claude_key()
 
     @app.get('/api/integrations/onshape')
-    def onshape_status(): return onshape_keys.status()
+    def onshape_status(): return onshape_keys().status()
 
     @app.put('/api/integrations/onshape')
     def onshape_connect(data:OnshapeCredentials):
-        if (onshape_keys.load() or {}).get('source')=='environment':
+        keys=onshape_keys()
+        if (keys.load() or {}).get('source')=='environment':
             raise Conflict('Onshape keys are set by environment variables; change them there')
         client=OnshapeClient(data.base_url,data.access_key,data.secret_key,app.state.onshape_transport)
         try: user=client.session()
         finally: client.close()
-        onshape_keys.save(data,user)
-        return onshape_keys.status()
+        keys.save(data,user)
+        return keys.status()
 
     @app.post('/api/integrations/onshape/test')
     def onshape_test():
-        client=onshape()
+        keys=onshape_keys()
+        client=OnshapeClient.from_store(keys,app.state.onshape_transport)
         try: user=client.session()
         finally: client.close()
-        onshape_keys.update_user(user)
-        return {**onshape_keys.status(),'user':user,'checked_at':time.time()}
+        keys.update_user(user)
+        return {**keys.status(),'user':user,'checked_at':time.time()}
 
     @app.delete('/api/integrations/onshape')
     def onshape_disconnect():
-        if (onshape_keys.load() or {}).get('source')=='environment':
+        keys=onshape_keys()
+        if (keys.load() or {}).get('source')=='environment':
             raise Conflict('Onshape keys are set by environment variables; remove them there')
-        onshape_keys.delete()
-        return onshape_keys.status()
+        keys.delete()
+        return keys.status()
 
     @app.get('/api/onshape/documents')
     def onshape_documents(q:str=Query('',max_length=100),filter:int=Query(5,ge=0,le=9),offset:int=Query(0,ge=0,le=2000)):
@@ -237,7 +268,7 @@ def create_app(settings=None,provider=None):
                 'tools':[{'name':name,'description':d} for name,(_,d) in TOOL_SPECS.items()],
                 'reference_domains':settings.reference_domains,'limits':{'model_turns':settings.max_model_turns,'run_tokens':settings.max_run_tokens,'upload_bytes':10*1024*1024},
                 'integrations':[{'name':'Bambu Studio','status':'connected' if __import__('app.bambu',fromlist=['binary']).binary() else 'not_configured','detail':'Slice CAD builds in your installed Bambu Studio with your printer, process and filament profiles: print time, filament, layers and Bambu\'s own printability warnings, plus a 3MF project to open.'},
-                                {'name':'Onshape','status':'connected' if onshape_keys.load() else 'not_configured','detail':'Import Part Studios or Assemblies as STL parts with a placed 3D assembly, and send generated STEP files back into a chosen Onshape document.'},
+                                {'name':'Onshape','status':'connected' if onshape_keys().load() else 'not_configured','detail':'Import Part Studios or Assemblies as STL parts with a placed 3D assembly, and send generated STEP files back into a chosen Onshape document.'},
                                 {'name':'Parametric CAD','status':'available','detail':'CadQuery solid modeling, STL/STEP export and validation'},
                                 {'name':'Model provider','status':'connected' if settings.provider in MODEL_PROVIDERS else 'not_configured','detail':provider_detail},
                                 {'name':'Reference reader','status':'available' if settings.reference_domains else 'disabled','detail':'Allowlisted HTML and PDF references with page images and source hashes'},
@@ -257,7 +288,11 @@ def create_app(settings=None,provider=None):
 
     @app.post('/api/tasks',status_code=201)
     def create_task(data:TaskCreate,idempotency_key:str|None=Header(default=None,max_length=150)):
-        return db.detail(db.create_task(data,idempotency_key))
+        # The key is held before the run is queued so the worker never sees the run without it.
+        tid=uid(); keep_key(tid)
+        created=db.create_task(data,idempotency_key,task_id=tid)
+        if created!=tid: engine.keys.forget(tid)
+        return db.detail(created)
 
     @app.get('/api/tasks/{task_id}')
     def task(task_id:str): return db.detail(task_id)
@@ -276,6 +311,7 @@ def create_app(settings=None,provider=None):
         if not data.content.strip(): raise ValueError('Message cannot be blank')
         content=data.content
         if data.focus: content=focused_message(store,task_id,data.focus,content)
+        db.require_task(task_id); keep_key(task_id)
         return {'run_id':db.add_message(task_id,content,idempotency_key)}
 
     @app.post('/api/tasks/{task_id}/cancel')
@@ -287,7 +323,9 @@ def create_app(settings=None,provider=None):
         return db.detail(task_id)
 
     @app.post('/api/tasks/{task_id}/retry',status_code=202)
-    def retry(task_id:str): return {'run_id':db.retry(task_id)}
+    def retry(task_id:str):
+        db.require_task(task_id); keep_key(task_id)
+        return {'run_id':db.retry(task_id)}
 
     @app.get('/api/tasks/{task_id}/session')
     def session_export(task_id:str,format:str=Query('json',max_length=8),raw:bool=False):
@@ -313,6 +351,7 @@ def create_app(settings=None,provider=None):
 
     @app.post('/api/tasks/{task_id}/approvals/{approval_id}',status_code=202)
     def decide(task_id:str,approval_id:str,data:ApprovalDecision):
+        db.require_task(task_id); keep_key(task_id)
         return {'run_id':db.decide_approval(task_id,approval_id,data)}
 
     rebuilding=set()
@@ -346,6 +385,7 @@ def create_app(settings=None,provider=None):
 
     @app.post('/api/tasks/{task_id}/questions/{questionnaire_id}/answer',status_code=202)
     def answer(task_id:str,questionnaire_id:str,data:ClarificationAnswer):
+        db.require_task(task_id); keep_key(task_id)
         return {'run_id':db.answer(task_id,questionnaire_id,data)}
 
     @app.get('/api/tasks/{task_id}/events')
@@ -488,12 +528,14 @@ def create_app(settings=None,provider=None):
 
     @app.post('/api/schedules',status_code=201)
     def create_schedule(data:ScheduleCreate):
+        hosted_off('Scheduled jobs')
         sid=uid(); now=time.time()
         with db.transaction() as c: c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?)',(sid,data.name,data.prompt,data.interval_minutes,int(data.enabled),now+data.interval_minutes*60,None,now))
         return db.one('SELECT * FROM schedules WHERE id=?',(sid,))
 
     @app.patch('/api/schedules/{schedule_id}')
     def update_schedule(schedule_id:str,data:SchedulePatch):
+        hosted_off('Scheduled jobs')
         row=db.one('SELECT * FROM schedules WHERE id=?',(schedule_id,))
         if not row: raise NotFound('Schedule not found')
         with db.transaction() as c: c.execute('UPDATE schedules SET enabled=?,next_run_at=? WHERE id=?',(int(data.enabled),time.time()+row['interval_minutes']*60,schedule_id))
@@ -502,6 +544,7 @@ def create_app(settings=None,provider=None):
     @app.post('/api/schedules/{schedule_id}/run',status_code=201)
     def run_schedule(schedule_id:str):
         # Run a job once now; a paused job stays paused and an enabled one keeps its next time.
+        hosted_off('Scheduled jobs')
         with db.transaction() as c:
             row=c.execute('SELECT * FROM schedules WHERE id=?',(schedule_id,)).fetchone()
             if not row: raise NotFound('Schedule not found')

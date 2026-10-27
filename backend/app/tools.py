@@ -358,6 +358,12 @@ class ToolRunner:
                             "json_extract(metadata,'$.kind') IN ('cad_source','cad_script')",(tid,rid))
         if not earlier or self.db.one("SELECT 1 FROM approvals WHERE run_id=? AND status='approved'",(rid,)):
             return None
+        # An approved plan that no build has applied yet carries over to a retried run.
+        last=self.db.one("SELECT status,decided_at FROM approvals WHERE task_id=? AND status!='pending' ORDER BY decided_at DESC LIMIT 1",(tid,))
+        if last and last['status']=='approved' and not self.db.one(
+                "SELECT 1 FROM artifacts WHERE task_id=? AND created_at>? AND json_extract(metadata,'$.kind') IN ('cad_source','cad_script')",
+                (tid,last['decided_at'])):
+            return None
         return failure('approval_required','This task already has a design. Call request_approval with the planned '
                        'changes, what stays fixed, risks and checks, then stop until the user approves.',
                        hint='The user can switch the task to automatic changes if they prefer.')

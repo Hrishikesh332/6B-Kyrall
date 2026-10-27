@@ -4,7 +4,11 @@ import json
 import logging
 from pathlib import Path
 import re
+import shutil
+import tempfile
 import time
+from .config import CONNECTION
+from .credentials import NO_KEY, KeyVault
 from .db import encode, uid
 from .provider import ResponsesProvider
 from .recipes import marker_rack, plate
@@ -19,15 +23,17 @@ class Engine:
         self.db,self.runner,self.settings=db,runner,settings
         self.provider=provider or ResponsesProvider(settings)
         self.shutdown=asyncio.Event()
-        self.active_run=None
+        self.active_runs=set()
+        # Hosted: each task's browser connection, held in memory while it has work.
+        self.keys=KeyVault()
 
     async def serve(self):
         while not self.shutdown.is_set():
             run=self.db.claim()
             if run:
-                self.active_run=run['id']
-                await self.run(run)
-                self.active_run=None
+                self.active_runs.add(run['id'])
+                try: await self.run(run)
+                finally: self.active_runs.discard(run['id'])
             else:
                 try: await asyncio.wait_for(self.shutdown.wait(),timeout=0.3)
                 except asyncio.TimeoutError: pass
@@ -39,6 +45,24 @@ class Engine:
                 c.execute("UPDATE runs SET lease_until=? WHERE id=? AND status='running'",(time.time()+90,rid))
 
     async def run(self,run):
+        if not self.settings.hosted: return await self.run_task(run)
+        tid=run['task_id']
+        connection=self.keys.get(tid)
+        if connection is None:
+            # After a restart or an expired entry: never fall back to anyone else's key.
+            self.db.emit(tid,run['id'],'activity',{'title':'Run needs attention','detail':NO_KEY})
+            self.db.finish(run['id'],'failed','Your model connection is no longer on the server. '+NO_KEY)
+            return
+        home=tempfile.mkdtemp(prefix='6b-claude-') if connection.provider=='claude' else ''
+        token=CONNECTION.set({**connection.fields(),'claude_home':home})
+        try: await self.run_task(run)
+        finally:
+            CONNECTION.reset(token)
+            if home: shutil.rmtree(home,ignore_errors=True)
+            if not self.db.one("SELECT 1 FROM runs WHERE task_id=? AND status IN ('queued','running')",(tid,)):
+                self.keys.forget(tid)
+
+    async def run_task(self,run):
         tid,rid=run['task_id'],run['id']
         heartbeat=asyncio.create_task(self.heartbeat(rid))
         try:

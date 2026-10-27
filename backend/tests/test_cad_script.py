@@ -268,3 +268,25 @@ async def test_revisions_record_what_changed_and_builds_compare(app):
         assert lid['size_delta_mm'][2] == 3 and lid['volume_delta_mm3'] > 0
         assert report['source_diff']['added_lines'] == 1 and '+lid_height = 8' in report['source_diff']['text']
         assert (await c.get(f'/api/tasks/{tid}/compare', params={'from_build': 'x'})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_approved_plan_survives_a_retry_until_a_build_applies_it(app):
+    app.state.settings.provider = 'claude'
+    db, runner = app.state.db, app.state.engine.runner
+    tid = db.create_task(TaskCreate(prompt='Enclosure'))
+    first = db.claim()
+    assert 'error' not in await runner.execute(tid, first['id'], 'b1', 'build_cad_script', {'name': 'box', 'script': ENCLOSURE})
+    approval = db.request_approval(tid, first['id'], {'title': 'Taller lid', 'summary': 'Raise the lid.',
+                                                      'changes': [{'target': 'lid', 'change': 'Taller'}]})
+    db.finish(first['id'], 'awaiting_input')
+    db.decide_approval(tid, approval['approval_id'], ApprovalDecision(decision='approve'))
+    db.claim(); db.finish(first['id'], 'failed', 'Provider crashed before applying the plan')
+    db.retry(tid)
+    second = db.claim()
+    assert 'error' not in await runner.execute(tid, second['id'], 'b2', 'build_cad_script', {'name': 'box', 'script': ENCLOSURE})
+    db.finish(second['id'], 'failed', 'Crashed again')
+    db.retry(tid)
+    third = db.claim()
+    blocked = await runner.execute(tid, third['id'], 'b3', 'build_cad_script', {'name': 'box', 'script': ENCLOSURE})
+    assert blocked['code'] == 'approval_required'  # that plan was applied; new changes need a new plan

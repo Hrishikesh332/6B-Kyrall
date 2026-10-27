@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
@@ -7,6 +8,11 @@ import math
 MODEL_PROVIDERS = ('openai', 'claude')
 VISION_PROVIDERS = ('claude',)
 PROVIDERS = ('workshop', *MODEL_PROVIDERS)
+
+# Hosted 6B: the browser's own model connection for the current request or run. It
+# shadows these settings fields only inside that context and never touches the shared values.
+CONNECTION = ContextVar('6b_connection', default=None)
+CONNECTION_FIELDS = frozenset({'provider', 'model', 'api_key', 'claude_model', 'anthropic_api_key', 'claude_home'})
 
 
 @dataclass
@@ -38,8 +44,25 @@ class Settings:
     isaac_container: str = field(default_factory=lambda: os.getenv('6B_ISAAC_CONTAINER', ''))
     isaac_python: str = field(default_factory=lambda: os.getenv('6B_ISAAC_PYTHON', ''))
     isaac_mcp_path: str = field(default_factory=lambda: os.getenv('6B_ISAAC_MCP_PATH', ''))
+    # Shared deployment: each browser brings its own model and Onshape keys, which are held
+    # in memory for its runs only. Server-wide keys, saved connections and schedules are off.
+    hosted: bool = field(default_factory=lambda: os.getenv('6B_HOSTED', '').lower() in ('1', 'true', 'yes'))
+    workers: int = field(default_factory=lambda: int(os.getenv('6B_WORKERS', '1')))
+    # Private HOME for one Claude Code run (hosted), so no CLI state outlives it.
+    claude_home: str = ''
+
+    def __getattribute__(self, name):
+        if name in CONNECTION_FIELDS:
+            override = CONNECTION.get()
+            if override is not None and name in override: return override[name]
+        return object.__getattribute__(self, name)
 
     def prepare(self):
+        if self.hosted:
+            # Nothing server-wide may pay for a visitor's run.
+            self.provider, self.model, self.api_key, self.anthropic_api_key = 'workshop', '', '', ''
+        if not 1 <= self.workers <= 16:
+            raise ValueError('6B_WORKERS must be between 1 and 16')
         if not math.isfinite(self.tool_timeout) or self.tool_timeout<=0:
             raise ValueError('6B_TOOL_TIMEOUT must be a positive finite number')
         if self.provider not in PROVIDERS:

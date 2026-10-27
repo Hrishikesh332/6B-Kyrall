@@ -15,7 +15,14 @@ import {
   Unplug,
   Upload,
 } from "lucide-react";
-import { api } from "./lib.js";
+import {
+  ONSHAPE_CONNECTION,
+  api,
+  forgetConnection,
+  rememberedConnection,
+  saveConnection,
+  savedConnection,
+} from "./lib.js";
 import { Dialog, ErrorNotice, Loading } from "./ui.jsx";
 
 // Onshape is read-only here: browse, then import geometry into a task.
@@ -33,7 +40,13 @@ export default function OnshapeSetup({
   const load = async () => {
     setError(null);
     try {
-      setStatus(await api("/integrations/onshape"));
+      const next = await api("/integrations/onshape");
+      // Hosted: the signed-in user was recorded in this browser when the keys were checked.
+      setStatus(
+        next.source === "browser" && !next.user
+          ? { ...next, user: savedConnection(ONSHAPE_CONNECTION)?.user }
+          : next,
+      );
     } catch (err) {
       setError(err);
     }
@@ -77,6 +90,7 @@ export default function OnshapeSetup({
           />
         ) : (
           <ConnectForm
+            hosted={status.hosted}
             onConnected={async (next) => {
               setStatus(next);
               await onChanged?.();
@@ -114,25 +128,34 @@ function Summary({ status, children }) {
   );
 }
 
-function ConnectForm({ onConnected, onClose }) {
+function ConnectForm({ hosted, onConnected, onClose }) {
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState(null);
+    [error, setError] = useState(null),
+    [remember, setRemember] = useState(
+      rememberedConnection(ONSHAPE_CONNECTION),
+    );
   const submit = async (e) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     setBusy(true);
     setError(null);
     try {
-      await onConnected(
-        await api("/integrations/onshape", {
-          method: "PUT",
-          body: {
-            base_url: form.get("base_url"),
-            access_key: form.get("access_key"),
-            secret_key: form.get("secret_key"),
-          },
-        }),
-      );
+      const keys = {
+        base_url: form.get("base_url"),
+        access_key: form.get("access_key"),
+        secret_key: form.get("secret_key"),
+      };
+      const next = await api("/integrations/onshape", {
+        method: "PUT",
+        body: keys,
+      });
+      if (next.source === "browser")
+        saveConnection(
+          ONSHAPE_CONNECTION,
+          { ...keys, base_url: next.base_url, user: next.user },
+          remember,
+        );
+      await onConnected(next);
     } catch (err) {
       setError(err);
     } finally {
@@ -195,10 +218,23 @@ function ConnectForm({ onConnected, onClose }) {
           {error.message}
         </p>
       )}
+      {hosted && (
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+          />
+          Remember on this device (otherwise cleared when this tab closes)
+        </label>
+      )}
       <p className="connect-note">
-        <KeyRound size={13} /> Keys are checked with Onshape, then stored only
-        in this workspace’s local data folder. 6B reads documents, and only
-        writes when you send a STEP file to Onshape (that needs Write access).
+        <KeyRound size={13} /> Keys are checked with Onshape, then stored only{" "}
+        {hosted
+          ? "in this browser and sent with your Onshape requests; the server never saves them."
+          : "in this workspace’s local data folder."}{" "}
+        6B reads documents, and only writes when you send a STEP file to Onshape
+        (that needs Write access).
       </p>
       <div className="form-actions">
         <button type="button" className="secondary" onClick={onClose}>
@@ -225,7 +261,8 @@ function Connected({ status, onBrowse, onStatus, onChanged, onClose, notify }) {
       setBusy("");
     }
   };
-  const fromEnv = status.source === "environment";
+  const fromEnv = status.source === "environment",
+    fromBrowser = status.source === "browser";
   return (
     <>
       <Summary status={status}>
@@ -242,7 +279,13 @@ function Connected({ status, onBrowse, onStatus, onChanged, onClose, notify }) {
         </div>
         <div>
           <dt>Stored in</dt>
-          <dd>{fromEnv ? "Environment variables" : "Local workspace data"}</dd>
+          <dd>
+            {fromEnv
+              ? "Environment variables"
+              : fromBrowser
+                ? "This browser only"
+                : "Local workspace data"}
+          </dd>
         </div>
       </dl>
       {check && (
@@ -290,6 +333,7 @@ function Connected({ status, onBrowse, onStatus, onChanged, onClose, notify }) {
                 onStatus(
                   await api("/integrations/onshape", { method: "DELETE" }),
                 );
+                if (fromBrowser) forgetConnection(ONSHAPE_CONNECTION);
                 await onChanged?.();
                 notify?.(
                   "Onshape disconnected. Imported files stay in your tasks.",

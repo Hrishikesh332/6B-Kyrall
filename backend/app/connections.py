@@ -32,6 +32,9 @@ class ConnectionInput(StrictModel):
 
 class ConnectionCheck(StrictModel):
     provider: Literal['workshop', 'openai', 'claude']
+    # Hosted 6B checks the browser's own key; it is used for this check only.
+    model: str = Field(default='', max_length=120, pattern=r'^[A-Za-z0-9._:\-\[\]/]*$')
+    api_key: str = Field(default='', max_length=300)
 
 
 class ConnectionStore:
@@ -57,7 +60,8 @@ class Connections:
         # Values from backend/.env stay the fallback for anything not chosen in the app.
         self.defaults = {'provider':settings.provider, 'model':settings.model,
                          'claude_model':settings.claude_model, 'anthropic_api_key':settings.anthropic_api_key}
-        self.apply(self.store.load())
+        # Hosted 6B never uses a connection saved on the server: each browser brings its own.
+        if not settings.hosted: self.apply(self.store.load())
 
     def apply(self, saved):
         s, d = self.settings, self.defaults
@@ -69,11 +73,14 @@ class Connections:
         s.anthropic_api_key = d['anthropic_api_key'] or saved.get('anthropic_api_key', '')
 
     def source(self):
+        if self.settings.hosted: return 'browser'
         return 'workspace' if self.store.load().get('provider') in PROVIDERS else 'environment'
 
     def overview(self):
-        s, saved = self.settings, self.store.load()
-        return {'active':{'provider':s.provider, 'name':NAMES[s.provider], 'source':self.source(),
+        s = self.settings
+        saved = {} if s.hosted else self.store.load()
+        return {'hosted':s.hosted,
+                'active':{'provider':s.provider, 'name':NAMES[s.provider], 'source':self.source(),
                           'model':s.claude_model if s.provider=='claude' else s.model, 'changed_at':saved.get('changed_at')},
                 'providers':[self.describe(p) for p in ('claude','workshop','openai')]}
 
@@ -94,14 +101,16 @@ class Connections:
                 binary = find_claude(s.claude_binary)
                 item.update(installed=True, binary=binary, sign_in=self.command(binary, 'claude', 'auth login'))
             except ProviderError as exc: item.update(installed=False, error=str(exc), sign_in='claude auth login')
-            item.update(model=s.claude_model, models=CLAUDE_MODELS, api_key_saved=bool(self.store.load().get('anthropic_api_key')),
+            item.update(model=s.claude_model, models=CLAUDE_MODELS, api_key_saved=False if s.hosted else bool(self.store.load().get('anthropic_api_key')),
                         api_key_from_environment=bool(self.defaults['anthropic_api_key']),
                         install='https://docs.claude.com/en/docs/claude-code/setup',
-                        detail='Uses the Claude account signed in to Claude Code on this computer (Pro, Max, Team or Enterprise), or an Anthropic Console API key.')
+                        detail='Runs Claude Code with your Anthropic Console API key, kept in this browser.' if s.hosted else
+                        'Uses the Claude account signed in to Claude Code on this computer (Pro, Max, Team or Enterprise), or an Anthropic Console API key.')
         elif provider=='openai':
             item.update(installed=True, model=s.model if s.provider=='openai' else self.defaults['model'],
                         api_key_set=bool(s.api_key),
-                        detail='Calls the OpenAI Responses API with OPENAI_API_KEY and 6B_MODEL from backend/.env.')
+                        detail='Calls the OpenAI Responses API with your API key, kept in this browser.' if s.hosted else
+                        'Calls the OpenAI Responses API with OPENAI_API_KEY and 6B_MODEL from backend/.env.')
         else:
             item.update(installed=True, detail='Built-in recipes for the marker organizer and mounting plate. No model or account.')
         return item

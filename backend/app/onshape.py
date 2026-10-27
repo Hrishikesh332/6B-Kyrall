@@ -116,6 +116,38 @@ class CredentialStore:
                 'connected_at': saved.get('connected_at')}
 
 
+class BrowserCredentials:
+    """Hosted 6B: Onshape keys the browser sends with each Onshape request; never saved."""
+    HEADERS = ('X-6B-Onshape-Url', 'X-6B-Onshape-Access', 'X-6B-Onshape-Secret')
+
+    def __init__(self, headers):
+        url, access, secret = (headers.get(h, '').strip() for h in self.HEADERS)
+        self.saved = None
+        if access and secret:
+            creds = OnshapeCredentials(base_url=url or 'https://cad.onshape.com', access_key=access, secret_key=secret)
+            self.saved = {**creds.model_dump(), 'source': 'browser'}
+
+    def load(self):
+        return self.saved
+
+    def save(self, credentials, user):
+        # Checked with Onshape; the browser keeps the keys, the server forgets them.
+        self.saved = {**credentials.model_dump(), 'source': 'browser', 'user': user, 'connected_at': time.time()}
+
+    def update_user(self, user):
+        if self.saved: self.saved['user'] = user
+
+    def delete(self):
+        self.saved = None
+
+    def status(self):
+        if not self.saved:
+            return {'configured': False, 'hosted': True}
+        return {'configured': True, 'hosted': True, 'source': 'browser', 'base_url': self.saved['base_url'],
+                'access_key_hint': '…' + self.saved['access_key'][-4:], 'user': self.saved.get('user'),
+                'connected_at': self.saved.get('connected_at')}
+
+
 class OnshapeClient:
     def __init__(self, base_url, access_key, secret_key, transport=None, timeout=60):
         self.base = normalize_base(base_url)
