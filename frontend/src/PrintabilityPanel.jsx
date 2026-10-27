@@ -7,6 +7,7 @@ import {
   Printer,
 } from "lucide-react";
 import { api } from "./lib.js";
+import { useResource } from "./hooks.js";
 
 export const printStatus = (report) => report?.printability?.status;
 
@@ -94,8 +95,13 @@ export default function PrintabilityPanel({ report, context }) {
   );
 }
 
-// A real slice of this build in the user's installed Bambu Studio.
+// A real slice of this build in Bambu Studio, shown only once the user has connected it.
 function BambuSlice({ context }) {
+  const bambu = useResource("/integrations/bambu");
+  return bambu.data?.connected ? <BambuSliceRun context={context} /> : null;
+}
+
+function BambuSliceRun({ context }) {
   const [result, setResult] = useState(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");

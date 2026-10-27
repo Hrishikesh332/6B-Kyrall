@@ -44,9 +44,28 @@ export default function BambuSetup({ onClose, notify }) {
     setBusy(true);
     try {
       setStatus(
-        await api("/integrations/bambu", { method: "PUT", body: choice }),
+        await api("/integrations/bambu", {
+          method: "PUT",
+          body: { ...choice, enabled: true },
+        }),
       );
-      notify?.("Bambu Studio profiles saved.");
+      notify?.(
+        status.connected
+          ? "Bambu Studio profiles saved."
+          : "Bambu Studio connected.",
+      );
+      onClose();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    setBusy(true);
+    try {
+      setStatus(await api("/integrations/bambu", { method: "DELETE" }));
+      notify?.("Bambu Studio disconnected. 6B will not slice with it.");
       onClose();
     } catch (err) {
       setError(err);
@@ -74,12 +93,14 @@ export default function BambuSetup({ onClose, notify }) {
                 </span>
               </div>
               <span
-                className={`connection-status${status.installed ? " is-connected" : ""}`}
+                className={`connection-status${status.connected ? " is-connected" : ""}`}
               >
-                {status.installed ? (
+                {status.connected ? (
                   <>
-                    <Check size={11} /> Installed
+                    <Check size={11} /> Connected
                   </>
+                ) : status.installed ? (
+                  "Not connected"
                 ) : (
                   "Not installed"
                 )}
@@ -88,9 +109,9 @@ export default function BambuSetup({ onClose, notify }) {
             {status.installed ? (
               <>
                 <p>
-                  6B slices builds in Bambu Studio on this computer and
-                  reports print time, filament and Bambu&apos;s own printability
-                  warnings. The agent can slice before delivering parts.
+                  {status.connected
+                    ? "6B slices builds in Bambu Studio on this computer and reports print time, filament and Bambu's own printability warnings. The agent can slice before delivering parts."
+                    : "Off until you connect it. Once connected, 6B and its agent can slice builds in Bambu Studio for print time, filament and Bambu's own warnings. Without it, 6B uses its built-in printability check."}
                 </p>
                 {options && choice ? (
                   <div className="bambu-fields">
@@ -127,6 +148,15 @@ export default function BambuSetup({ onClose, notify }) {
                   </small>
                 )}
                 <div className="form-actions">
+                  {status.connected && (
+                    <button
+                      className="secondary"
+                      disabled={busy}
+                      onClick={disconnect}
+                    >
+                      Disconnect
+                    </button>
+                  )}
                   <button className="secondary" onClick={onClose}>
                     Cancel
                   </button>
@@ -135,7 +165,11 @@ export default function BambuSetup({ onClose, notify }) {
                     disabled={busy || !options}
                     onClick={save}
                   >
-                    {busy ? "Saving…" : "Save profiles"}
+                    {busy
+                      ? "Saving…"
+                      : status.connected
+                        ? "Save profiles"
+                        : "Connect"}
                   </button>
                 </div>
               </>

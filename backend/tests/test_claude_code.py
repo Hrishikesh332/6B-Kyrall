@@ -3,7 +3,7 @@ import os
 import pytest
 import claude_agent_sdk
 from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, TextBlock, ToolUseBlock, UserMessage
-from app.claude_code import MAX_STEERS, PREFIX, STEER, claude_env, count_usage, run_claude
+from app.claude_code import MAX_STEERS, PREFIX, STEER, available_models, claude_env, count_usage, run_claude
 from app.config import Settings
 from app.main import create_app
 from app.models import ClarificationAnswer
@@ -197,6 +197,47 @@ def test_connection_choice_is_checked_saved_and_survives_restart(tmp_path, monke
     assert back.status_code == 200 and restarted.state.settings.provider == 'workshop'
 
 
+@pytest.mark.asyncio
+async def test_available_models_come_from_the_claude_code_handshake(tmp_path):
+    class Handshake:
+        def __init__(self, options): self.options, self.closed = options, False
+        async def connect(self): pass
+        async def get_server_info(self):
+            return {'models':[{'value':'default', 'displayName':'Default (recommended)', 'description':'Sonnet'},
+                              {'value':'opus', 'displayName':'Opus', 'description':'Complex work'}, {'displayName':'No value'}]}
+        async def disconnect(self): self.closed = True
+    made = []
+    factory = lambda options: made.append(Handshake(options)) or made[-1]
+    models = await available_models(Settings(data_dir=tmp_path, anthropic_api_key=''), factory)
+    assert models == [{'id':'', 'name':'Account default', 'description':'Sonnet'}, {'id':'opus', 'name':'Opus', 'description':'Complex work'}]
+    assert made[0].closed and made[0].options.tools == [] and made[0].options.setting_sources == []
+
+
+def test_model_picker_lists_and_switches_the_claude_model(tmp_path, monkeypatch):
+    app = create_app(Settings(data_dir=tmp_path, provider='claude', model='', api_token='', worker_enabled=False, anthropic_api_key=''))
+    c = app.test_client()
+    calls = []
+    async def listed(settings): calls.append(1); return [{'id':'', 'name':'Default', 'description':''}, {'id':'opus', 'name':'Opus', 'description':''}]
+    monkeypatch.setattr('app.claude_code.available_models', listed)
+    first = c.get('/api/integrations/model/models').json
+    assert first['provider'] == 'claude' and [m['id'] for m in first['models']] == ['', 'opus']
+    c.get('/api/integrations/model/models')
+    assert len(calls) == 1
+    chosen = c.put('/api/integrations/model/choice', json={'model':'opus'})
+    assert chosen.status_code == 200 and chosen.json['active']['model'] == 'opus'
+    assert app.state.settings.claude_model == 'opus' and c.get('/api/integrations/model/models').json['model'] == 'opus'
+    assert create_app(Settings(data_dir=tmp_path, provider='workshop', model='', api_token='', worker_enabled=False, anthropic_api_key='')).state.settings.claude_model == 'opus'
+
+
+def test_model_picker_falls_back_to_aliases_when_claude_code_cannot_answer(tmp_path, monkeypatch):
+    app = create_app(Settings(data_dir=tmp_path, provider='claude', model='', api_token='', worker_enabled=False, anthropic_api_key=''))
+    async def broken(settings): raise ProviderError('Claude Code executable not found')
+    monkeypatch.setattr('app.claude_code.available_models', broken)
+    assert [m['id'] for m in app.test_client().get('/api/integrations/model/models').json['models']] == ['', 'opus', 'sonnet', 'haiku']
+    workshop = create_app(Settings(data_dir=tmp_path/'w', provider='workshop', model='', api_token='', worker_enabled=False, anthropic_api_key=''))
+    assert workshop.test_client().put('/api/integrations/model/choice', json={'model':'opus'}).status_code == 422
+
+
 def test_removed_provider_is_rejected_and_old_choice_falls_back(tmp_path):
     saved = tmp_path/'integrations'/'model.json'
     saved.parent.mkdir(parents=True); saved.write_text('{"provider":"retired","models":{"retired":"old-model"}}')
@@ -267,3 +308,23 @@ def test_saved_context_drops_duplicates_and_trims_instead_of_failing(app, task, 
     monkeypatch.setattr(ac, 'CONTEXT_LIMIT', 10)
     with pytest.raises(ValueError, match='context budget'):
         ac.task_context(app.state.engine, run)
+
+
+def test_keep_awake_holds_caffeinate_only_while_running(monkeypatch):
+    import subprocess
+    from app import awake
+    started = []
+    class Proc:
+        def __init__(self, args, **kw): started.append(args); self.alive = True
+        def poll(self): return None if self.alive else 0
+        def terminate(self): self.alive = False
+        def wait(self, timeout=None): return 0
+    monkeypatch.setattr(awake.sys, 'platform', 'darwin')
+    monkeypatch.setattr(awake.shutil, 'which', lambda name: '/usr/bin/caffeinate')
+    monkeypatch.setattr(subprocess, 'Popen', Proc)
+    hold = awake.KeepAwake().start()
+    assert started == [['/usr/bin/caffeinate', '-i']] and hold.process.alive
+    proc = hold.process; hold.stop()
+    assert not proc.alive and hold.process is None
+    monkeypatch.setattr(awake.sys, 'platform', 'linux')
+    assert awake.KeepAwake().start().process is None  # hosted servers never try

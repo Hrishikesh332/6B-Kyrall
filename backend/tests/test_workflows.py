@@ -116,17 +116,61 @@ async def test_artifact_scope_and_traversal(app,task):
 
 def test_context_scopes_and_project_memory_boundary(app):
     db=app.state.db; pid=uid()
-    with db.transaction() as c:c.execute('INSERT INTO projects VALUES(?,?,?,?,?)',(pid,'Private project','Brief','project',time.time()))
+    with db.transaction() as c:c.execute('INSERT INTO projects(id,name,brief,memory_scope,created_at) VALUES(?,?,?,?,?)',(pid,'Private project','Brief','project',time.time()))
     private=db.create_task(TaskCreate(prompt='Design',project_id=pid,context_scope='project'))
     public=db.create_task(TaskCreate(prompt='Design',context_scope='workspace'))
     isolated=db.create_task(TaskCreate(prompt='Design',context_scope='isolated'))
-    with db.transaction() as c:c.execute('INSERT INTO memories VALUES(?,?,?,?)',(uid(),private,encode('Marker geometry private dimensions'),time.time()))
+    with db.transaction() as c:c.execute('INSERT INTO memories(id,task_id,project_id,content,created_at) VALUES(?,?,?,?,?)',(uid(),private,pid,encode('Marker geometry private dimensions'),time.time()))
     runner=app.state.engine.runner
     assert runner.search_context(private,'marker')['results']
     assert runner.search_context(public,'marker')['results']==[]
     assert runner.search_context(isolated,'marker')['results']==[]
     with db.transaction() as c:c.execute("UPDATE projects SET memory_scope='workspace' WHERE id=?",(pid,))
     assert runner.search_context(public,'marker')['results']
+
+
+@pytest.mark.asyncio
+async def test_project_chats_share_project_memory(app):
+    db=app.state.db; runner=app.state.engine.runner
+    async with httpx.AsyncClient(transport=AsyncWSGITransport(app=app),base_url='http://testserver') as c:
+        p=(await c.post('/api/projects',json={'name':'Drone','brief':'Carbon frame'})).json()
+        first=db.create_task(TaskCreate(prompt='Design the arm',project_id=p['id'],context_scope='project'))
+        await runner.dispatch(first,None,'save_memory',{'content':'Arm tube is 16 mm OD carbon.'})
+        note=(await c.post(f'/api/projects/{p["id"]}/memories',json={'content':'Use M3 hardware everywhere.'})).json()
+        assert note['task_id'] is None
+        second=db.create_task(TaskCreate(prompt='Design the motor mount',project_id=p['id'],context_scope='project'))
+        memory=db.project_memory(db.require_task(second))
+        assert [n['content'] for n in memory['notes']]==['Use M3 hardware everywhere.','Arm tube is 16 mm OD carbon.']
+        assert memory['other_chats'][0]['title'] and memory['notes'][0]['source']=='Project note'
+        assert runner.search_context(second,'M3')['results'][0]['title']=='Project note'
+        isolated=db.create_task(TaskCreate(prompt='Unrelated',project_id=p['id'],context_scope='isolated'))
+        assert db.project_memory(db.require_task(isolated)) is None
+        listed=(await c.get('/api/projects')).json()[0]
+        assert listed['chat_count']==3 and listed['memory_count']==2
+        detail=(await c.get('/api/projects/'+p['id'])).json()
+        assert {x['id'] for x in detail['chats']}=={first,second,isolated} and len(detail['memories'])==2
+        revised=(await c.patch('/api/memories/'+note['id'],json={'content':'Use M2.5 hardware.'})).json()
+        assert revised['content']=='Use M2.5 hardware.'
+        assert (await c.patch('/api/memories/missing',json={'content':'x'})).status_code==404
+        assert (await c.post('/api/projects/missing/memories',json={'content':'x'})).status_code==404
+        workspace=(await c.get('/api/memories')).json()
+        assert {m['project_name'] for m in workspace}=={'Drone'}
+
+
+def test_old_memories_migrate_to_their_project(tmp_path):
+    import sqlite3
+    from app.db import DB
+    path=tmp_path/'old.db'
+    con=sqlite3.connect(path)
+    con.executescript("""CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,brief TEXT NOT NULL DEFAULT '',memory_scope TEXT NOT NULL DEFAULT 'project',created_at REAL NOT NULL);
+CREATE TABLE tasks(id TEXT PRIMARY KEY,title TEXT NOT NULL,project_id TEXT,context_scope TEXT NOT NULL,status TEXT NOT NULL,plan TEXT NOT NULL DEFAULT '[]',spec TEXT NOT NULL DEFAULT '{}',archived INTEGER NOT NULL DEFAULT 0,created_at REAL NOT NULL,updated_at REAL NOT NULL);
+CREATE TABLE memories(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),content TEXT NOT NULL,created_at REAL NOT NULL);
+INSERT INTO projects VALUES('p','P','','project',1);
+INSERT INTO tasks(id,title,project_id,context_scope,status,created_at,updated_at) VALUES('t','T','p','project','completed',1,1);
+INSERT INTO memories VALUES('m','t','"kept"',1);""")
+    con.commit(); con.close()
+    db=DB(path)
+    assert db.one('SELECT project_id,content FROM memories WHERE id=?',('m',))=={'project_id':'p','content':'kept'}
 
 
 def test_cad_language_rejects_code_cycles_and_nonfinite_values():

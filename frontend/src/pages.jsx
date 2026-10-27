@@ -69,16 +69,16 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
   return (
     <div className="page">
       <PageHeading
-        title="Projects"
+        title="Chats"
         description="Your ideas, iterations, and finished designs."
         action={
           <a className="primary" href="#new">
             <Plus size={17} />
-            New project
+            New chat
           </a>
         }
       />
-      <div className="tabs" aria-label="Project collections">
+      <div className="tabs" aria-label="Chat collections">
         <button
           className={!archived ? "active" : ""}
           aria-pressed={!archived}
@@ -87,7 +87,7 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
             setOffset(0);
           }}
         >
-          All projects
+          All chats
         </button>
         <button
           className={archived ? "active" : ""}
@@ -111,8 +111,8 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
         <div className="search-field">
           <Search size={17} />
           <input
-            aria-label="Search projects"
-            placeholder="Search projects…"
+            aria-label="Search chats"
+            placeholder="Search chats…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -147,7 +147,7 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
         <>
           <div className="results-label">
             {resource.data.total}{" "}
-            {resource.data.total === 1 ? "project" : "projects"}
+            {resource.data.total === 1 ? "chat" : "chats"}
           </div>
           <div aria-busy={busy}>
             {resource.data.items.length ? (
@@ -161,15 +161,15 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
               <Empty
                 title={
                   search || status
-                    ? "No matching projects"
+                    ? "No matching chats"
                     : archived
-                      ? "No archived projects"
+                      ? "No archived chats"
                       : "Your next idea starts here"
                 }
               >
                 {search || status
                   ? "Try another search or status."
-                  : "Start a project to create something new."}
+                  : "Start a chat to create something new."}
               </Empty>
             )}
           </div>
@@ -299,7 +299,7 @@ export function FilesPage({ openArtifact, revision, notify, setModal }) {
     </div>
   );
 }
-export function ProjectsPage({ projects, setModal, notify, newTask }) {
+export function ProjectsPage({ projects, setModal, notify, openProject }) {
   const [query, setQuery] = useState("");
   const visibleProjects = projects.filter((project) =>
     `${project.name} ${project.brief}`
@@ -317,7 +317,7 @@ export function ProjectsPage({ projects, setModal, notify, newTask }) {
     <div className="page">
       <PageHeading
         title="Projects"
-        description="A shared home for related tasks, briefs, and references."
+        description="Folders of chats that share a brief, reference files and memory."
         action={
           <button
             className="primary"
@@ -356,7 +356,7 @@ export function ProjectsPage({ projects, setModal, notify, newTask }) {
                 <span className="project-label">Project</span>
               </div>
               <h2>
-                <button onClick={() => edit(p.id)}>{p.name}</button>
+                <button onClick={() => openProject(p.id)}>{p.name}</button>
               </h2>
               <p>
                 {p.brief.slice(0, 180) ||
@@ -364,16 +364,20 @@ export function ProjectsPage({ projects, setModal, notify, newTask }) {
               </p>
               <small>
                 <ShieldCheck size={13} />
-                {p.memory_scope === "project"
-                  ? "Project-only memory"
-                  : "Workspace memory"}
+                {p.chat_count ?? 0} {p.chat_count === 1 ? "chat" : "chats"} ·{" "}
+                {p.memory_count ?? 0}{" "}
+                {p.memory_count === 1 ? "memory" : "memories"} ·{" "}
+                {p.memory_scope === "project" ? "project-only" : "workspace"}
               </small>
               <footer>
                 <button className="secondary" onClick={() => edit(p.id)}>
                   Edit project
                 </button>
-                <button className="text-button" onClick={() => newTask(p.id)}>
-                  Start project
+                <button
+                  className="text-button"
+                  onClick={() => openProject(p.id)}
+                >
+                  Open project
                   <ArrowRight size={15} />
                 </button>
               </footer>
@@ -398,7 +402,7 @@ export function ProjectsPage({ projects, setModal, notify, newTask }) {
         >
           {query
             ? "Try another project name or brief."
-            : "Create a project to give related tasks a shared brief and reference files."}
+            : "Create a project to keep related chats together with a shared brief, files and memory."}
         </Empty>
       )}
     </div>

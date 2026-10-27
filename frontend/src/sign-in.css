@@ -1,0 +1,110 @@
+.sign-in {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background: var(--bg);
+}
+.sign-in-card {
+  width: min(400px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 36px 28px 30px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  text-align: center;
+}
+.sign-in-card h1 {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sign-in-card p {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+.sign-in-card .error-notice {
+  width: 100%;
+  text-align: left;
+}
+/* Google's sign-in button: white surface, dark text, the "G" mark on the left. */
+.google-button {
+  width: 100%;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  background: #fff;
+  color: #1f1f1f;
+  font-size: 14px;
+  font-weight: 500;
+}
+.google-button:hover:not(:disabled) {
+  background: #f2f2f2;
+}
+.google-button:disabled {
+  opacity: 0.7;
+}
+.profile-avatar.google {
+  border-radius: 50%;
+  object-fit: cover;
+}
+.profile-avatar.initial {
+  display: grid;
+  place-items: center;
+  background: #2a3a14;
+  color: var(--accent-text);
+  font-weight: 600;
+  font-size: 13px;
+}
+/* Top right of the workspace bar. */
+.topbar-account {
+  margin-left: auto;
+}
+.workspace-connection + .topbar-account {
+  margin-left: 4px;
+}
+.topbar-account.google-button {
+  width: auto;
+  min-height: 36px;
+  padding: 7px 14px;
+  gap: 10px;
+  font-size: 13px;
+}
+.topbar-account.signed-in {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid #2c2c2c;
+  border-radius: 999px;
+  background: #141414;
+  color: #d4d4d4;
+  font-size: 12.5px;
+  max-width: 200px;
+}
+.topbar-account.signed-in:hover {
+  background: #1d1d1d;
+}
+.topbar-account.signed-in .profile-avatar {
+  width: 26px;
+  height: 26px;
+}
+.topbar-account.signed-in span:last-child {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@media (max-width: 760px) {
+  .topbar-account.google-button {
+    padding: 7px 10px;
+  }
+}

@@ -12,7 +12,14 @@ PROVIDERS = ('workshop', *MODEL_PROVIDERS)
 # Hosted 6B: the browser's own model connection for the current request or run. It
 # shadows these settings fields only inside that context and never touches the shared values.
 CONNECTION = ContextVar('6b_connection', default=None)
-CONNECTION_FIELDS = frozenset({'provider', 'model', 'api_key', 'claude_model', 'anthropic_api_key', 'claude_home'})
+CONNECTION_FIELDS = frozenset({'provider', 'model', 'api_key', 'claude_model', 'anthropic_api_key', 'claude_home', 'openai_plan'})
+# The Google account signed in for the current request (uid, email, name, picture), when
+# Google sign-in is on. New chats, projects and jobs belong to it.
+USER = ContextVar('6b_user', default=None)
+
+
+def current_owner():
+    return (USER.get() or {}).get('uid')
 
 
 @dataclass
@@ -50,6 +57,28 @@ class Settings:
     workers: int = field(default_factory=lambda: int(os.getenv('6B_WORKERS', '1')))
     # Private HOME for one Claude Code run (hosted), so no CLI state outlives it.
     claude_home: str = ''
+    # The OpenAI connection is a user's ChatGPT plan (Sign in with ChatGPT), not an API key.
+    openai_plan: bool = False
+    # Sign in with ChatGPT on a hosted website needs a client ID approved by OpenAI. Without
+    # one, OpenAI's self-serve registration only redirects to http://127.0.0.1.
+    chatgpt_client_id: str = field(default_factory=lambda: os.getenv('6B_CHATGPT_CLIENT_ID', ''))
+    chatgpt_client_secret: str = field(default_factory=lambda: os.getenv('6B_CHATGPT_CLIENT_SECRET', ''))
+    chatgpt_redirect_uri: str = field(default_factory=lambda: os.getenv('6B_CHATGPT_REDIRECT_URI', ''))
+    # Firebase: Google sign-in and the Realtime Database cloud copy of each chat. The service
+    # account is the key JSON itself or its base64, held only in the environment, never in a
+    # file here. The web API key, auth domain and app ID are public browser settings.
+    firebase_service_account: str = field(default_factory=lambda: os.getenv('FIREBASE_SERVICE_ACCOUNT', ''))
+    firebase_web_api_key: str = field(default_factory=lambda: os.getenv('FIREBASE_WEB_API_KEY', ''))
+    firebase_auth_domain: str = field(default_factory=lambda: os.getenv('FIREBASE_AUTH_DOMAIN', ''))
+    firebase_app_id: str = field(default_factory=lambda: os.getenv('FIREBASE_APP_ID', ''))
+    # Empty: https://<project>-default-rtdb.firebaseio.com (a us-central1 database).
+    firebase_database_url: str = field(default_factory=lambda: os.getenv('FIREBASE_DATABASE_URL', ''))
+    cloud_sync: bool = field(default_factory=lambda: os.getenv('6B_CLOUD_SYNC', '1').lower() not in ('0', 'false', 'no'))
+    # A personal workspace works signed out unless this is set; hosted ones always need sign-in.
+    require_sign_in: bool = field(default_factory=lambda: os.getenv('6B_REQUIRE_SIGN_IN', '').lower() in ('1', 'true', 'yes'))
+    # The Google account that owns a personal workspace: signing in with it takes the chats made
+    # while signed out. Empty: any account that signs in here takes them.
+    owner_email: str = field(default_factory=lambda: os.getenv('6B_OWNER_EMAIL', '').strip().lower())
 
     def __getattribute__(self, name):
         if name in CONNECTION_FIELDS:

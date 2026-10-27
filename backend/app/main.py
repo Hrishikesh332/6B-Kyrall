@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 import re
 import time
-from urllib.parse import urlparse
-from flask import g, request, jsonify, Response, send_from_directory
+import secrets
+from urllib.parse import unquote, urlencode, urlparse
+from flask import g, redirect, request, jsonify, Response, send_from_directory
 from werkzeug.datastructures import FileStorage
 from .api import API, HTTPException, FileResponse, File, Header, Query
 from .runtime import WorkerRuntime
@@ -20,13 +21,15 @@ from .cad_schema import part_dependencies
 from .cad_script import ParameterValues, apply_parameters
 from .rules import RuleSetUserDecision
 from .bambu import BambuSettings
-from .models import ApprovalDecision,TaskCreate,TaskPatch,MessageCreate,ClarificationAnswer,ProjectCreate,ProjectPatch,ScheduleCreate,SchedulePatch,RuleCreate,RulePatch
-from .image_intake import ImageSetInput, normalize_image, save_image_set
+from .models import ApprovalDecision,TaskCreate,TaskPatch,MessageCreate,ClarificationAnswer,ProjectCreate,ProjectPatch,MemoryInput,ScheduleCreate,SchedulePatch,RuleCreate,RulePatch
+from .image_intake import PHOTO_ROLES, ImageSetInput, normalize_image, save_image_set
 from .simulation_export import SimulationExportInput, export_scene
 from .mesh_samples import MeshSamples
-from .connections import NAMES, ConnectionCheck, ConnectionInput, Connections
-from .config import CONNECTION
-from .credentials import from_headers, verify
+from .connections import NAMES, ConnectionCheck, ConnectionInput, Connections, ModelChoice
+from .config import CONNECTION, USER
+from .firebase import SESSION_COOKIE, SESSION_TTL, CloudSync, Firebase, SignInError
+from .credentials import Connection, from_headers, verify
+from .chatgpt import COOKIE as CHATGPT_COOKIE, HOSTED_CALLBACK, LOCAL_CALLBACK, PLAN_SCOPE, ChatGPT, ChatGPTError
 from .onshape import BrowserCredentials, CredentialStore, OnshapeClient, OnshapeCredentials, OnshapeError, OnshapeExport, OnshapeImport, export_step, import_element, ID as ONSHAPE_ID
 
 
@@ -62,7 +65,7 @@ def focused_message(store, task_id, focus, content):
 def start_job(db, c, job):
     """Open a new chat for one run of a job and queue it."""
     tid,now=uid(),time.time()
-    c.execute("INSERT INTO tasks(id,title,context_scope,status,created_at,updated_at) VALUES(?,?,'isolated','queued',?,?)",(tid,job['name'],now,now))
+    c.execute("INSERT INTO tasks(id,title,context_scope,status,owner,created_at,updated_at) VALUES(?,?,'isolated','queued',?,?,?)",(tid,job['name'],job['owner'],now,now))
     rid=db.queue_run(c,tid)
     db.message(c,tid,rid,'user','text',job['prompt'])
     c.execute('UPDATE schedules SET last_task_id=? WHERE id=?',(tid,job['id']))
@@ -81,7 +84,7 @@ async def scheduler(db, stop):
         except asyncio.TimeoutError: pass
 
 
-def create_app(settings=None,provider=None):
+def create_app(settings=None,provider=None,firebase=None):
     settings=settings or Settings()
     settings.prepare()
     # A connection chosen in the app overrides the backend/.env provider on later starts.
@@ -94,22 +97,88 @@ def create_app(settings=None,provider=None):
     store=ArtifactStore(db,settings.data_dir/'artifacts')
     runner=ToolRunner(db,store,settings)
     engine=Engine(db,runner,settings,provider)
+    firebase=firebase or Firebase(settings)
+    # Each chat's Firestore copy is pushed when a run starts and when it stops.
+    cloud=engine.cloud=CloudSync(db,firebase.database())
+    # Chats whose copy never arrived (the database was missing or offline) are sent again on start.
+    # With sign-in on, chats nobody owns yet wait for their owner's sign-in instead.
+    for row in db.all('SELECT id FROM tasks WHERE cloud_synced_at IS NULL'+(' AND owner IS NOT NULL' if firebase.sign_in else '')+' ORDER BY created_at') if cloud.pool else ():
+        cloud.push(row['id'],'startup')
     mesh_samples=MeshSamples()
     app=API()
     app.config['TRUSTED_HOSTS']=[*app.config['TRUSTED_HOSTS'],*settings.allowed_hosts]
     app.state.db,app.state.engine,app.state.store,app.state.settings=db,engine,store,settings
+    app.state.firebase,app.state.cloud=firebase,cloud
     # Hosted schedules would fire with no browser present to supply a key, so none run.
     app.state.runtime=WorkerRuntime(engine,lambda stop:stop.wait() if settings.hosted else scheduler(db,stop))
 
     @app.before_request
     def local_boundary():
         if request.path.startswith(('/api/','/openapi.json')):
-            if settings.api_token and not hmac.compare_digest(request.headers.get('authorization',''),'Bearer '+settings.api_token):
+            # OpenAI's sign-in redirect cannot carry the token; state and the session cookie protect it.
+            if settings.api_token and request.path!=HOSTED_CALLBACK and not hmac.compare_digest(request.headers.get('authorization',''),'Bearer '+settings.api_token):
                 return jsonify(detail='Local API token required'),401
             origin=request.headers.get('origin')
             if origin and origin != request.host_url.rstrip('/'):
                 return jsonify(detail='Cross-origin API requests are not allowed'),403
         if settings.worker_enabled: app.state.runtime.start()
+
+    # Open without Google sign-in: the sign-in flow itself, health checks and OpenAI's redirect.
+    signed_out_paths=('/api/auth/','/api/health',HOSTED_CALLBACK)
+    owned=re.compile(r'/api/(tasks|projects)/([^/]+)')
+
+    @app.before_request
+    def signed_in():
+        # Google sign-in on: chats and projects answer only to the account that made them
+        # (others get a plain 404); signed out, only to no account. Hosted, or with
+        # 6B_REQUIRE_SIGN_IN, every API call needs a signed-in account.
+        g.user=None
+        if not firebase.sign_in or not request.path.startswith('/api/') or request.path.startswith(signed_out_paths): return
+        user=visitor()
+        if not user and firebase.required: return jsonify(detail='Sign in with Google to use this workspace.',sign_in='google'),401
+        if user: g.user,g.user_token=user,USER.set(user)
+        match=owned.match(request.path)
+        if match:
+            table='tasks' if match[1]=='tasks' else 'projects'
+            row=db.one(f'SELECT owner FROM {table} WHERE id=?',(match[2],))
+            if row and row['owner']!=account():
+                return jsonify(detail=('Task' if table=='tasks' else 'Project')+' not found'),404
+
+    def account():
+        return g.user['uid'] if g.get('user') else None
+
+    def private_to_admin(user):
+        # A personal workspace runs on its owner's own model keys: once an admin is set, no other
+        # account signs in to it. Hosted workspaces take every account, each on its own keys.
+        return bool(not settings.hosted and settings.owner_email) and not is_admin(user)
+
+    def visitor():
+        user=firebase.user(request.cookies.get(SESSION_COOKIE,''))
+        return None if user and private_to_admin(user) else user
+
+    def is_admin(user):
+        """The workspace admin: the signed-in Google account, with a verified email, named by 6B_OWNER_EMAIL."""
+        return bool(user and settings.owner_email and user.get('email_verified') and user.get('email','').lower()==settings.owner_email)
+
+    def with_role(user):
+        # The browser learns only whether this account is the admin, never the admin's email.
+        return {**user,'admin':is_admin(user)} if user else None
+
+    def admin_hidden():
+        # With Google sign-in and an admin set, workspace-wide settings answer only to the admin.
+        return bool(firebase.sign_in and settings.owner_email) and not is_admin(g.get('user'))
+
+    def admin_only(feature):
+        if admin_hidden(): raise HTTPException(403,f'Only the workspace admin can change {feature}.')
+
+    def mine(column='owner'):
+        """SQL condition and arguments limiting a listing to the current account's own rows."""
+        if not firebase.sign_in: return [],[]
+        return ([f'{column}=?'],[account()]) if account() else ([f'{column} IS NULL'],[])
+
+    def require_own_project(project_id):
+        if project_id and firebase.sign_in and (db.one('SELECT owner FROM projects WHERE id=?',(project_id,)) or {}).get('owner')!=account():
+            raise NotFound('Project not found')
 
     @app.before_request
     def browser_connection():
@@ -121,24 +190,83 @@ def create_app(settings=None,provider=None):
     def forget_browser_connection(_exc):
         token=g.pop('connection_token',None)
         if token is not None: CONNECTION.reset(token)
+        token=g.pop('user_token',None)
+        if token is not None: USER.reset(token)
 
     def keep_key(task_id):
         """Hosted: hold this browser's connection, with its key, for the task's next run."""
-        if settings.hosted: engine.keys.put(task_id,from_headers(request.headers,with_key=True))
+        if not settings.hosted: return
+        connection=from_headers(request.headers,with_key=True)
+        if connection.provider=='chatgpt':
+            # The ChatGPT token never leaves the server; the browser's sign-in cookie selects it.
+            record=chatgpt.fresh(request.cookies.get(CHATGPT_COOKIE,''))
+            if not record: raise ValueError('Continue with ChatGPT in Integrations, then try again.')
+            if PLAN_SCOPE not in record.get('scopes',[]):
+                raise ValueError('Using your ChatGPT plan was not allowed during sign-in. Continue with ChatGPT again and allow it, or use an API key.')
+            connection=Connection('chatgpt',connection.model,record['access_token'])
+        engine.keys.put(task_id,connection)
 
     def hosted_off(feature):
         if settings.hosted: raise HTTPException(403,f'{feature} are off on hosted 6B: they would run without your browser’s own model key.')
+
+    # Google sign-in runs Firebase Auth in the page: Google's script loader, Firebase's auth
+    # iframe and token endpoints, and the account's profile photo.
+    google=firebase.sign_in
+    csp='; '.join(["default-src 'self'",
+        "script-src 'self'"+(' https://apis.google.com' if google else ''),
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' blob:"+(' https://lh3.googleusercontent.com' if google else ''),
+        "connect-src 'self'"+(' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com' if google else ''),
+        'frame-src '+('https://'+firebase.web['authDomain'] if google else "'none'"),
+        "object-src 'none'","base-uri 'self'","frame-ancestors 'none'"])
 
     @app.after_request
     def response_headers(response):
         response.headers['X-Content-Type-Options']='nosniff'
         response.headers['Referrer-Policy']='no-referrer'
-        response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+        response.headers['Content-Security-Policy']=csp
         return response
 
     app.register_error_handler(Conflict,lambda exc:(jsonify(detail=str(exc)),409))
     app.register_error_handler(NotFound,lambda exc:(jsonify(detail=str(exc)),404))
     app.register_error_handler(ValueError,lambda exc:(jsonify(detail=str(exc)),422))
+
+    @app.get('/api/auth/config')
+    def auth_config():
+        return {**firebase.config(),'user':with_role(visitor())}
+
+    @app.post('/api/auth/session')
+    def sign_in():
+        if not firebase.sign_in: raise HTTPException(404,'Google sign-in is not set up on this server')
+        id_token=(request.get_json(silent=True) or {}).get('id_token')
+        if not isinstance(id_token,str) or not 20<len(id_token)<8192: raise ValueError('Missing Google ID token')
+        try: cookie,user=firebase.start_session(id_token)
+        except SignInError as exc:
+            refused=jsonify(detail=str(exc),sign_in='google'); refused.status_code=401
+            return refused
+        if private_to_admin(user):
+            refused=jsonify(detail='This workspace is private to its owner. Sign in with the owner’s Google account.',sign_in='google'); refused.status_code=403
+            return refused
+        if not settings.hosted:
+            # A personal workspace: its owner's account takes the chats, projects and jobs made
+            # while signed out, and copies them to the cloud. Hosted workspaces never hand them out.
+            with db.transaction() as c:
+                c.execute('UPDATE tasks SET owner=?,cloud_synced_at=NULL WHERE owner IS NULL',(user['uid'],))
+                for table in ('projects','schedules'): c.execute(f'UPDATE {table} SET owner=? WHERE owner IS NULL',(user['uid'],))
+        cloud.save_user(user)
+        # Every chat of this account not yet in the cloud, including ones it just took.
+        for row in db.all('SELECT id FROM tasks WHERE owner=? AND cloud_synced_at IS NULL ORDER BY created_at',(user['uid'],)):
+            cloud.push(row['id'],'sign-in')
+        response=jsonify(user=with_role(user))
+        # HttpOnly: page scripts never see it. Lax: it is sent when the user follows a link here.
+        response.set_cookie(SESSION_COOKIE,cookie,max_age=int(SESSION_TTL.total_seconds()),httponly=True,secure=request.is_secure,samesite='Lax',path='/')
+        return response
+
+    @app.delete('/api/auth/session')
+    def sign_out():
+        response=jsonify(user=None)
+        response.delete_cookie(SESSION_COOKIE,path='/',httponly=True,secure=request.is_secure,samesite='Lax')
+        return response
 
     @app.get('/api/health')
     def health(): return {'ok':True,'provider':settings.provider,'model':(settings.claude_model if settings.provider=='claude' else settings.model) or None,'worker_enabled':settings.worker_enabled,'framework':'flask'}
@@ -146,15 +274,19 @@ def create_app(settings=None,provider=None):
     @app.get('/api/simulation/status')
     def simulation_status():
         from .simulation import configured, observation
+        if admin_hidden():
+            # The Isaac host and container are the admin's machine; others learn nothing of it.
+            return {'configured':False,'connected':False,'scope':'Only the workspace admin can observe the simulation.'}
         if not configured(settings):
             return {'configured':False,'connected':False,'scope':'Configure the Isaac SSH host, container, Python path and MCP script path to observe an existing session.'}
         try: return observation(settings)
         except (ValueError,OSError) as exc:
-            return {'configured':True,'connected':False,'error':str(exc),'design_validation':'unlinked'}
+            return {'configured':True,'connected':False,'error':str(exc),'container':settings.isaac_container,'design_validation':'unlinked'}
 
     @app.get('/api/simulation/snapshot')
     def simulation_snapshot():
         from .simulation import snapshot
+        if admin_hidden(): raise HTTPException(403,'Only the workspace admin can observe the simulation.')
         try: pixels,mime=snapshot(settings)
         except (ValueError,OSError) as exc: raise HTTPException(503,str(exc))
         return Response(pixels,mimetype=mime,headers={'Cache-Control':'no-store'})
@@ -171,10 +303,59 @@ def create_app(settings=None,provider=None):
         return OnshapeClient.from_store(onshape_keys(),app.state.onshape_transport)
     app.state.onshape_transport=None
     app.state.model_transport=None
+    chatgpt=app.state.chatgpt=ChatGPT(settings)
+    app.register_error_handler(ChatGPTError,lambda exc:(jsonify(detail=str(exc)),422))
+    chatgpt_cookie=lambda:request.cookies.get(CHATGPT_COOKIE,'')
+
+    @app.get('/api/integrations/chatgpt')
+    def chatgpt_status(): return chatgpt.status(chatgpt_cookie(),request.host_url)
+
+    @app.post('/api/integrations/chatgpt/start')
+    def chatgpt_start():
+        cookie=chatgpt_cookie() or secrets.token_urlsafe(32)
+        response=jsonify(url=chatgpt.start(cookie,request.host_url))
+        # HttpOnly: page scripts never see it. Lax: it returns with OpenAI's redirect to the callback.
+        response.set_cookie(CHATGPT_COOKIE,cookie,max_age=90*24*3600,httponly=True,secure=request.is_secure,samesite='Lax',path='/')
+        return response
+
+    def chatgpt_callback():
+        try:
+            # Read the code exactly as sent: form-style parsing would turn a literal "+" into a space.
+            raw={k:unquote(v) for k,_,v in (p.partition('=') for p in request.query_string.decode().split('&')) if k}
+            chatgpt.finish(chatgpt_cookie(),{**request.args.to_dict(),'code':raw.get('code',request.args.get('code',''))})
+            target='/?chatgpt=connected#integrations'
+        except ChatGPTError as exc:
+            target='/?'+urlencode({'chatgpt_error':str(exc)})+'#integrations'
+        return redirect(target)
+    app.add_url_rule(HOSTED_CALLBACK,'chatgpt_callback',chatgpt_callback)
+    # OpenAI's self-serve registration only redirects to http://127.0.0.1:<port>/auth/callback.
+    app.add_url_rule(LOCAL_CALLBACK,'chatgpt_local_callback',chatgpt_callback)
+
+    @app.get('/api/integrations/chatgpt/models')
+    def chatgpt_models(): return {'models':chatgpt.models(chatgpt_cookie())}
+
+    @app.delete('/api/integrations/chatgpt')
+    def chatgpt_sign_out():
+        revoked=chatgpt.sign_out(chatgpt_cookie())
+        return {**chatgpt.status(chatgpt_cookie(),request.host_url),'revoked':revoked}
     app.register_error_handler(OnshapeError,lambda exc:(jsonify(detail=str(exc)),502 if 'reached' in str(exc) else 422))
 
     @app.get('/api/integrations/model')
     def model_connection(): return connections.overview()
+
+    @app.get('/api/integrations/model/models')
+    def model_choices():
+        # The models the active connection can run, for the model picker on a new project.
+        if settings.provider=='claude': models,model=connections.claude_models(),settings.claude_model
+        elif settings.openai_plan: models,model=chatgpt.models(chatgpt_cookie()),settings.model
+        elif settings.provider=='openai': models,model=[{'id':settings.model,'name':settings.model}] if settings.model else [],settings.model
+        else: models,model=[],''
+        return {'provider':settings.provider,'plan':settings.openai_plan,'model':model,'models':models}
+
+    @app.put('/api/integrations/model/choice')
+    def model_choose(data:ModelChoice):
+        hosted_off('Server-wide model connections'); admin_only('the model connection')
+        return connections.choose(data.model)
 
     @app.post('/api/integrations/model/check')
     def model_connection_check(data:ConnectionCheck):
@@ -183,13 +364,13 @@ def create_app(settings=None,provider=None):
 
     @app.put('/api/integrations/model')
     def model_connect(data:ConnectionInput):
-        hosted_off('Server-wide model connections')
+        hosted_off('Server-wide model connections'); admin_only('the model connection')
         busy=engine.active_runs or db.one("SELECT 1 FROM runs WHERE status='running'")
         return connections.connect(data,bool(busy))
 
     @app.delete('/api/integrations/model/anthropic-key')
     def model_forget_key():
-        hosted_off('Server-wide model connections')
+        hosted_off('Server-wide model connections'); admin_only('the model connection')
         if connections.defaults['anthropic_api_key']:
             raise Conflict('ANTHROPIC_API_KEY is set in the environment; remove it there')
         return connections.forget_claude_key()
@@ -199,6 +380,8 @@ def create_app(settings=None,provider=None):
 
     @app.put('/api/integrations/onshape')
     def onshape_connect(data:OnshapeCredentials):
+        # Hosted keys belong to the browser that sent them; local ones are the workspace's.
+        if not settings.hosted: admin_only('the Onshape keys')
         keys=onshape_keys()
         if (keys.load() or {}).get('source')=='environment':
             raise Conflict('Onshape keys are set by environment variables; change them there')
@@ -219,6 +402,7 @@ def create_app(settings=None,provider=None):
 
     @app.delete('/api/integrations/onshape')
     def onshape_disconnect():
+        if not settings.hosted: admin_only('the Onshape keys')
         keys=onshape_keys()
         if (keys.load() or {}).get('source')=='environment':
             raise Conflict('Onshape keys are set by environment variables; remove them there')
@@ -264,10 +448,10 @@ def create_app(settings=None,provider=None):
         model_name={'claude':settings.claude_model or 'Claude Code account default','openai':settings.model}.get(settings.provider,'Local workshop')
         provider_detail={'claude':'Signed-in Claude Code account'+(f'; model {settings.claude_model}' if settings.claude_model else '; account default model'),
                          'openai':settings.model}.get(settings.provider,'Workshop recipes run without an API key')
-        return {'provider':settings.provider,'provider_name':NAMES[settings.provider],'connection_source':connections.source(),'model':model_name,'reasoning_effort':settings.reasoning_effort if settings.provider in MODEL_PROVIDERS else None,
+        return {'provider':settings.provider,'provider_name':'ChatGPT plan' if settings.openai_plan else NAMES[settings.provider],'plan':settings.openai_plan,'connection_source':connections.source(),'model':model_name,'reasoning_effort':settings.reasoning_effort if settings.provider in MODEL_PROVIDERS else None,
                 'tools':[{'name':name,'description':d} for name,(_,d) in TOOL_SPECS.items()],
                 'reference_domains':settings.reference_domains,'limits':{'model_turns':settings.max_model_turns,'run_tokens':settings.max_run_tokens,'upload_bytes':10*1024*1024},
-                'integrations':[{'name':'Bambu Studio','status':'connected' if __import__('app.bambu',fromlist=['binary']).binary() else 'not_configured','detail':'Slice CAD builds in your installed Bambu Studio with your printer, process and filament profiles: print time, filament, layers and Bambu\'s own printability warnings, plus a 3MF project to open.'},
+                'integrations':[{'name':'Bambu Studio','status':bambu_state(),'detail':'Slice CAD builds in your installed Bambu Studio with your printer, process and filament profiles: print time, filament, layers and Bambu\'s own printability warnings, plus a 3MF project to open.'},
                                 {'name':'Onshape','status':'connected' if onshape_keys().load() else 'not_configured','detail':'Import Part Studios or Assemblies as STL parts with a placed 3D assembly, and send generated STEP files back into a chosen Onshape document.'},
                                 {'name':'Parametric CAD','status':'available','detail':'CadQuery solid modeling, STL/STEP export and validation'},
                                 {'name':'Model provider','status':'connected' if settings.provider in MODEL_PROVIDERS else 'not_configured','detail':provider_detail},
@@ -279,7 +463,8 @@ def create_app(settings=None,provider=None):
 
     @app.get('/api/tasks')
     def tasks(q:str='',status:str|None=None,project_id:str|None=None,archived:bool=False,limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0)):
-        conditions,args=['archived=?'],[int(archived)]
+        conditions,args=mine()
+        conditions.append('archived=?'); args.append(int(archived))
         if q: conditions.append('title LIKE ?'); args.append('%'+q+'%')
         if status: conditions.append('status=?'); args.append(status)
         if project_id: conditions.append('project_id=?'); args.append(project_id)
@@ -288,6 +473,7 @@ def create_app(settings=None,provider=None):
 
     @app.post('/api/tasks',status_code=201)
     def create_task(data:TaskCreate,idempotency_key:str|None=Header(default=None,max_length=150)):
+        require_own_project(data.project_id)
         # The key is held before the run is queued so the worker never sees the run without it.
         tid=uid(); keep_key(tid)
         created=db.create_task(data,idempotency_key,task_id=tid)
@@ -438,7 +624,8 @@ def create_app(settings=None,provider=None):
 
     @app.get('/api/files')
     def files(q:str='',task_id:str|None=None,latest:bool=True):
-        where,args=['(a.name LIKE ? OR t.title LIKE ?)'],['%'+q+'%','%'+q+'%']
+        where,args=mine('t.owner')
+        where.append('(a.name LIKE ? OR t.title LIKE ?)'); args+=['%'+q+'%','%'+q+'%']
         if task_id: where.append('a.task_id=?'); args.append(task_id)
         if latest: where.append('a.version=(SELECT MAX(b.version) FROM artifacts b WHERE b.task_id=a.task_id AND b.name=a.name)')
         return db.all('SELECT a.id,a.task_id,a.name,a.version,a.media_type,a.size,a.sha256,a.metadata,a.created_at,t.title AS task_title FROM artifacts a JOIN tasks t ON t.id=a.task_id WHERE '+' AND '.join(where)+' ORDER BY a.created_at DESC LIMIT 300',args)
@@ -463,9 +650,14 @@ def create_app(settings=None,provider=None):
         metadata={'kind':'upload','trust':'untrusted'}
         if Path(name).suffix.lower() in ('.png','.jpg','.jpeg','.webp') or (file.mimetype or '').startswith('image/'):
             name,content,metadata=normalize_image(name,content)
+            role=request.form.get('role','object')
+            if role not in PHOTO_ROLES: raise ValueError('Photo role must be object or gripper')
+            metadata['photo_role']=role
         result=store.put(task_id,None,name,content,metadata)
+        attachment={'artifact_id':result['id'],'name':result['name']}
+        if 'photo_role' in metadata: attachment['role']=metadata['photo_role']
         with db.transaction() as c:
-            db.message(c,task_id,None,'user','attachment',{'artifact_id':result['id'],'name':result['name']})
+            db.message(c,task_id,None,'user','attachment',attachment)
         return result
 
     @app.post('/api/tasks/{task_id}/image-sets',status_code=201)
@@ -474,12 +666,22 @@ def create_app(settings=None,provider=None):
         return save_image_set(store,task_id,data)
 
     @app.get('/api/projects')
-    def projects(): return db.all('SELECT * FROM projects ORDER BY created_at DESC')
+    def projects():
+        where,args=mine('p.owner')
+        rows=db.all('SELECT p.*,(SELECT COUNT(*) FROM tasks t WHERE t.project_id=p.id AND t.archived=0) AS chat_count,'
+                    '(SELECT COUNT(*) FROM memories m WHERE m.project_id=p.id) AS memory_count FROM projects p '
+                    +('WHERE '+where[0] if where else '')+' ORDER BY p.created_at DESC',args)
+        # The sidebar nests each project's latest chats under its folder.
+        where,args=mine('t.owner')
+        recent=db.all('SELECT id,title,status,project_id,updated_at FROM (SELECT t.*,ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY updated_at DESC) AS n '
+                      'FROM tasks t WHERE project_id IS NOT NULL AND archived=0'+''.join(' AND '+w for w in where)+') WHERE n<=5 ORDER BY updated_at DESC',args)
+        for row in rows: row['recent_chats']=[c for c in recent if c['project_id']==row['id']]
+        return rows
 
     @app.post('/api/projects',status_code=201)
     def create_project(data:ProjectCreate):
         pid=uid()
-        with db.transaction() as c: c.execute('INSERT INTO projects VALUES(?,?,?,?,?)',(pid,data.name,data.brief,data.memory_scope,time.time()))
+        with db.transaction() as c: c.execute('INSERT INTO projects(id,name,brief,memory_scope,owner,created_at) VALUES(?,?,?,?,?,?)',(pid,data.name,data.brief,data.memory_scope,account(),time.time()))
         return db.one('SELECT * FROM projects WHERE id=?',(pid,))
 
     @app.get('/api/projects/{project_id}')
@@ -487,7 +689,20 @@ def create_app(settings=None,provider=None):
         result=db.one('SELECT * FROM projects WHERE id=?',(project_id,))
         if not result: raise NotFound('Project not found')
         result['files']=db.all('SELECT id,name,size,created_at FROM project_files WHERE project_id=?',(project_id,))
+        where,args=mine()
+        result['chats']=db.all('SELECT id,title,status,context_scope,updated_at FROM tasks WHERE project_id=? AND archived=0'+''.join(' AND '+w for w in where)+' ORDER BY updated_at DESC LIMIT 100',(project_id,*args))
+        result['memories']=project_memories(project_id)
         return result
+
+    def project_memories(project_id):
+        return db.all('SELECT m.id,m.task_id,m.content,m.created_at,t.title FROM memories m LEFT JOIN tasks t ON t.id=m.task_id '
+                      'WHERE m.project_id=? ORDER BY m.created_at DESC LIMIT 200',(project_id,))
+
+    @app.post('/api/projects/{project_id}/memories',status_code=201)
+    def remember(project_id:str,data:MemoryInput):
+        project(project_id); mid=uid()
+        with db.transaction() as c: c.execute('INSERT INTO memories(id,task_id,project_id,content,created_at) VALUES(?,?,?,?,?)',(mid,None,project_id,encode(data.content.strip()),time.time()))
+        return db.one('SELECT id,task_id,content,created_at,NULL AS title FROM memories WHERE id=?',(mid,))
 
     @app.patch('/api/projects/{project_id}')
     def update_project(project_id:str,data:ProjectPatch):
@@ -516,7 +731,14 @@ def create_app(settings=None,provider=None):
         return FileResponse(path,filename=row['name'],media_type='application/octet-stream')
 
     @app.get('/api/memories')
-    def memories(): return db.all('SELECT m.*,t.title FROM memories m JOIN tasks t ON t.id=m.task_id ORDER BY m.created_at DESC LIMIT 100')
+    def memories(): return db.all('SELECT m.*,t.title,p.name AS project_name FROM memories m LEFT JOIN tasks t ON t.id=m.task_id '
+                                  'LEFT JOIN projects p ON p.id=m.project_id ORDER BY m.created_at DESC LIMIT 100')
+
+    @app.patch('/api/memories/{memory_id}')
+    def revise_memory(memory_id:str,data:MemoryInput):
+        with db.transaction() as c:
+            if not c.execute('UPDATE memories SET content=? WHERE id=?',(encode(data.content.strip()),memory_id)).rowcount: raise NotFound('Memory not found')
+        return db.one('SELECT m.id,m.task_id,m.content,m.created_at,t.title FROM memories m LEFT JOIN tasks t ON t.id=m.task_id WHERE m.id=?',(memory_id,))
 
     @app.delete('/api/memories/{memory_id}')
     def forget(memory_id:str):
@@ -524,30 +746,38 @@ def create_app(settings=None,provider=None):
         return {'deleted':True}
 
     @app.get('/api/schedules')
-    def schedules(): return db.all('SELECT s.*,t.status AS last_task_status FROM schedules s LEFT JOIN tasks t ON t.id=s.last_task_id ORDER BY s.created_at DESC')
+    def schedules():
+        where,args=mine('s.owner')
+        return db.all('SELECT s.*,t.status AS last_task_status FROM schedules s LEFT JOIN tasks t ON t.id=s.last_task_id'+(' WHERE '+where[0] if where else '')+' ORDER BY s.created_at DESC',tuple(args))
+
+    def require_own_schedule(c,schedule_id):
+        row=c.execute('SELECT * FROM schedules WHERE id=?',(schedule_id,)).fetchone()
+        if not row or (firebase.sign_in and row['owner']!=account()): raise NotFound('Schedule not found')
+        return row
 
     @app.post('/api/schedules',status_code=201)
     def create_schedule(data:ScheduleCreate):
-        hosted_off('Scheduled jobs')
+        # Jobs run on the workspace's own model connection, which is the admin's.
+        hosted_off('Scheduled jobs'); admin_only('scheduled jobs')
         sid=uid(); now=time.time()
-        with db.transaction() as c: c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?)',(sid,data.name,data.prompt,data.interval_minutes,int(data.enabled),now+data.interval_minutes*60,None,now))
+        with db.transaction() as c: c.execute('INSERT INTO schedules(id,name,prompt,interval_minutes,enabled,next_run_at,last_task_id,created_at,owner) VALUES(?,?,?,?,?,?,?,?,?)',
+                                              (sid,data.name,data.prompt,data.interval_minutes,int(data.enabled),now+data.interval_minutes*60,None,now,account()))
         return db.one('SELECT * FROM schedules WHERE id=?',(sid,))
 
     @app.patch('/api/schedules/{schedule_id}')
     def update_schedule(schedule_id:str,data:SchedulePatch):
-        hosted_off('Scheduled jobs')
-        row=db.one('SELECT * FROM schedules WHERE id=?',(schedule_id,))
-        if not row: raise NotFound('Schedule not found')
-        with db.transaction() as c: c.execute('UPDATE schedules SET enabled=?,next_run_at=? WHERE id=?',(int(data.enabled),time.time()+row['interval_minutes']*60,schedule_id))
+        hosted_off('Scheduled jobs'); admin_only('scheduled jobs')
+        with db.transaction() as c:
+            row=require_own_schedule(c,schedule_id)
+            c.execute('UPDATE schedules SET enabled=?,next_run_at=? WHERE id=?',(int(data.enabled),time.time()+row['interval_minutes']*60,schedule_id))
         return db.one('SELECT * FROM schedules WHERE id=?',(schedule_id,))
 
     @app.post('/api/schedules/{schedule_id}/run',status_code=201)
     def run_schedule(schedule_id:str):
         # Run a job once now; a paused job stays paused and an enabled one keeps its next time.
-        hosted_off('Scheduled jobs')
+        hosted_off('Scheduled jobs'); admin_only('scheduled jobs')
         with db.transaction() as c:
-            row=c.execute('SELECT * FROM schedules WHERE id=?',(schedule_id,)).fetchone()
-            if not row: raise NotFound('Schedule not found')
+            row=require_own_schedule(c,schedule_id)
             tid=start_job(db,c,row)
         return db.detail(tid)
 
@@ -556,6 +786,8 @@ def create_app(settings=None,provider=None):
 
     @app.post('/api/rules',status_code=201)
     def create_rule(data:RuleCreate):
+        # Rules guide every account's runs, so only the admin writes them.
+        admin_only('workspace rules')
         if data.project_id and not db.one('SELECT 1 FROM projects WHERE id=?',(data.project_id,)): raise NotFound('Project not found')
         rid=uid()
         with db.transaction() as c:
@@ -568,6 +800,7 @@ def create_app(settings=None,provider=None):
 
     @app.patch('/api/rules/{rule_id}')
     def update_rule(rule_id:str,data:RulePatch):
+        admin_only('workspace rules')
         if not db.one('SELECT 1 FROM rules WHERE id=?',(rule_id,)): raise NotFound('Rule not found')
         with db.transaction() as c:
             if data.enabled is not None: c.execute('UPDATE rules SET enabled=? WHERE id=?',(int(data.enabled),rule_id))
@@ -579,9 +812,20 @@ def create_app(settings=None,provider=None):
                 c.execute('UPDATE rules SET applies_when=? WHERE id=? OR (rule_set!=\'\' AND rule_set=?)',(data.applies_when.strip(),rule_id,current))
         return db.one('SELECT r.*,p.name AS project_name FROM rules r LEFT JOIN projects p ON p.id=r.project_id WHERE r.id=?',(rule_id,))
 
+    def bambu_state():
+        from .bambu import Store, binary
+        return 'connected' if Store(settings.data_dir).connected() else 'available' if binary() else 'not_configured'
+
     @app.get('/api/integrations/bambu')
     def bambu_status():
         from .bambu import Store, status
+        return status(Store(settings.data_dir))
+
+    @app.delete('/api/integrations/bambu')
+    def bambu_disconnect():
+        admin_only('the Bambu printer')
+        from .bambu import Store, status
+        Store(settings.data_dir).disconnect()
         return status(Store(settings.data_dir))
 
     @app.get('/api/integrations/bambu/profiles')
@@ -591,6 +835,7 @@ def create_app(settings=None,provider=None):
 
     @app.put('/api/integrations/bambu')
     def bambu_save(data:BambuSettings):
+        admin_only('the Bambu printer')
         from .bambu import Store, status
         Store(settings.data_dir).save(data)
         return status(Store(settings.data_dir))
@@ -620,6 +865,7 @@ def create_app(settings=None,provider=None):
 
     @app.post('/api/rules/templates/{template_id}',status_code=201)
     def add_rule_template(template_id:str,project_id:str=Query('',max_length=100)):
+        admin_only('workspace rules')
         from .rules import add_template
         if project_id and not db.one('SELECT 1 FROM projects WHERE id=?',(project_id,)): raise NotFound('Project not found')
         return add_template(db,template_id,project_id or None)
@@ -638,6 +884,7 @@ def create_app(settings=None,provider=None):
 
     @app.delete('/api/rules/{rule_id}')
     def delete_rule(rule_id:str):
+        admin_only('workspace rules')
         with db.transaction() as c: c.execute('DELETE FROM rules WHERE id=?',(rule_id,))
         return {'deleted':True}
 

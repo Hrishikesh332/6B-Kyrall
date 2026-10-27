@@ -603,12 +603,15 @@ export function MeshPreview({
     };
   }, [mesh]);
   useEffect(() => {
-    let shown = part
+    let shown = hidden;
+    // The file's own component stays solid; the rest of the structure fades
+    // back instead of disappearing, so context for the part stays visible.
+    let ghosted = part
       ? mesh.parts.filter((p) => p.name !== part).map((p) => p.name)
-      : hidden;
-    let ghosted = [];
+      : [];
     if (sequence)
-      if (ghostUpcoming) ghosted = sequence.upcoming;
+      if (ghostUpcoming)
+        ghosted = [...new Set([...ghosted, ...sequence.upcoming])];
       else shown = [...new Set([...shown, ...sequence.upcoming])];
     if (selected && isolate)
       ghosted = mesh.parts.map((p) => p.name).filter((n) => n !== selected);
@@ -618,7 +621,7 @@ export function MeshPreview({
       offsets: sequence?.offsets || {},
       hidden: shown,
       ghosted,
-      selected,
+      selected: selected || part,
       rotate,
     });
   }, [

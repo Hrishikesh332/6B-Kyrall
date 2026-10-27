@@ -290,3 +290,43 @@ async def test_approved_plan_survives_a_retry_until_a_build_applies_it(app):
     third = db.claim()
     blocked = await runner.execute(tid, third['id'], 'b3', 'build_cad_script', {'name': 'box', 'script': ENCLOSURE})
     assert blocked['code'] == 'approval_required'  # that plan was applied; new changes need a new plan
+
+
+@pytest.mark.asyncio
+async def test_completion_counts_work_from_the_attempts_a_retry_resumes(app):
+    from app.completion import completion_errors
+    db, runner, engine = app.state.db, app.state.engine.runner, app.state.engine
+    tid = db.create_task(TaskCreate(prompt='Enclosure'))
+    first = db.claim()
+    assert 'error' not in await runner.execute(tid, first['id'], 'b1', 'build_cad_script', {'name': 'box', 'script': ENCLOSURE})
+    db.finish(first['id'], 'failed', 'Provider dropped the stream')
+    db.retry(tid)
+    second = db.claim()
+    # The build from the failed attempt counts: what remains is inspecting and packaging it, not rebuilding.
+    errors = completion_errors(engine, second, {})
+    assert any(e.startswith('Inspect the latest validation.json using inspect_validation (artifact_id ') for e in errors)
+    assert not any('built in this run' in e or 'must pass numeric validation' in e for e in errors)
+    db.finish(second['id'], 'completed')
+    db.add_message(tid, 'Now add a vent', None)
+    third = db.claim()
+    assert completion_errors(engine, third, {}) == []  # a new request starts from its own work
+
+
+def test_gate_refusals_are_not_unresolved_tool_errors():
+    from app.tools import unresolved_error
+    assert unresolved_error({'error': 'This task already has a design.', 'code': 'approval_required'}) is None
+    assert unresolved_error({'error': 'Decide which rule sets apply', 'code': 'rules_decision_required'}) is None
+    assert unresolved_error({'error': 'Line 3: NameError', 'code': 'tool_failed'}) == 'Line 3: NameError'
+    assert unresolved_error({'ok': True}) is None
+
+
+@pytest.mark.asyncio
+async def test_unreachable_references_are_reported_but_never_block_delivery(app):
+    from app.tools import unresolved_error
+    app.state.settings.reference_domains = ('download.franka.de',)
+    db, runner = app.state.db, app.state.engine.runner
+    tid = db.create_task(TaskCreate(prompt='Gripper'))
+    run = db.claim()
+    blocked = await runner.execute(tid, run['id'], 'f1', 'fetch_reference', {'url': 'https://frankaemika.github.io/docs/'})
+    assert blocked['code'] == 'reference_unavailable' and 'allowlisted' in blocked['error'] and blocked['hint']
+    assert unresolved_error(blocked) is None

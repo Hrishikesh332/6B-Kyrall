@@ -14,7 +14,7 @@ import time
 from .agent_context import compact_result, task_context
 from .db import encode, uid
 from .provider import ProviderError
-from .tools import review_image, tool_definitions
+from .tools import review_image, tool_definitions, unresolved_error
 from .completion import check_completion
 
 SERVER = '6b'
@@ -97,6 +97,22 @@ def default_client(options):
     return ClaudeSDKClient(options)
 
 
+async def available_models(settings, client_factory=default_client):
+    """Models the signed-in account can use, from Claude Code's startup handshake; spends no tokens."""
+    from claude_agent_sdk import ClaudeAgentOptions
+    client = client_factory(ClaudeAgentOptions(tools=[], setting_sources=[], plugins=[],
+                                               cli_path=find_claude(settings.claude_binary), env=claude_env(settings)))
+    try:
+        await asyncio.wait_for(client.connect(), 30)
+        info = await client.get_server_info() or {}
+    except asyncio.TimeoutError: raise ProviderError('Claude Code did not list its models') from None
+    finally: await client.disconnect()
+    # "default" is the account default, which 6B saves as no model at all.
+    return [{'id':'', 'name':'Account default', 'description':m.get('description') or ''} if m['value']=='default' else
+            {'id':m['value'], 'name':m.get('displayName') or m['value'],
+             'description':m.get('description') or ''} for m in info.get('models', []) if m.get('value')]
+
+
 def count_usage(state, counted, message):
     """Add one API response's usage once.
 
@@ -153,7 +169,7 @@ async def run_claude(engine, run, client_factory=default_client):
             state['busy']+=1
             try: result=await engine.runner.execute(tid,rid,f'{session_id}:{state["calls"]}',name,args,deadline=deadline)
             finally: state['busy']-=1; state['progress']=time.monotonic()
-            if isinstance(result,dict) and result.get('error') and result.get('code')!='tool_unavailable': unresolved[name]=result['error']
+            if (error:=unresolved_error(result)): unresolved[name]=error
             else: unresolved.pop(name,None)
             content=[{'type':'text','text':encode(compact_result(result))}]
             image=review_image(name,result)

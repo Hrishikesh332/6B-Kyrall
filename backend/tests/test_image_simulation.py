@@ -9,9 +9,9 @@ from app.simulation_export import DynamicBody, usda_scene, export_scene, Simulat
 from app.simulation import read_isaac
 
 
-def photo(client, tid, color='red', name='object.jpg'):
+def photo(client, tid, color='red', name='object.jpg', **form):
     stream=io.BytesIO(); Image.new('RGB',(80,60),color).save(stream,format='JPEG');stream.seek(0)
-    response=client.post(f'/api/tasks/{tid}/uploads',data={'file':(stream,name)})
+    response=client.post(f'/api/tasks/{tid}/uploads',data={'file':(stream,name),**form})
     assert response.status_code==201, response.json
     return response.json
 
@@ -33,6 +33,21 @@ def test_photo_decode_and_capture_provenance(app,task):
     assert content['views'][0]['sha256']==hashlib.sha256(raw).hexdigest()
     assert content['width_mm']==40 and content['depth_mm'] is None
     assert len(content['limitations'])>=3
+
+
+def test_chat_photo_roles_reach_agent_context(app,task):
+    from app.agent_context import task_context
+    client=app.test_client()
+    obj=photo(client,task,name='cup.jpg'); grip=photo(client,task,'blue','jaw.jpg',role='gripper')
+    assert obj['metadata']['photo_role']=='object' and grip['metadata']['photo_role']=='gripper'
+    attachments=[m['content'] for m in client.get(f'/api/tasks/{task}').json['messages'] if m['kind']=='attachment']
+    assert {a['name']:a['role'] for a in attachments}=={'cup.png':'object','jaw.png':'gripper'}
+    bad=io.BytesIO(); Image.new('RGB',(20,20)).save(bad,format='PNG'); bad.seek(0)
+    assert client.post(f'/api/tasks/{task}/uploads',data={'file':(bad,'x.png'),'role':'robot'}).status_code==422
+    run=app.state.db.one('SELECT * FROM runs WHERE task_id=?',(task,))
+    context=json.loads(task_context(app.state.engine,run))
+    roles={p['name']:p['role'] for p in context['photo_attachments']['photos']}
+    assert roles=={'cup.png':'object','jaw.png':'gripper'}
 
 
 def test_photo_rejects_corruption_and_excessive_pixels(app,task):

@@ -213,14 +213,16 @@ def undecided(db, task_id):
     return [s['rule_set'] for s in task_rules(db, task_id) if s['status'] == 'pending']
 
 
-def unchecked_must_rules(db, task_id, run_id):
-    """Must rules without a check recorded in this run against the latest build."""
-    build = db.one("SELECT json_extract(metadata,'$.build_id') AS build FROM artifacts WHERE task_id=? AND run_id=? AND "
-                   "json_extract(metadata,'$.kind')='validation' ORDER BY created_at DESC LIMIT 1", (task_id, run_id))
+def unchecked_must_rules(db, task_id, run_ids):
+    """Must rules without a check recorded in these runs (a run and the attempts it retries) against the latest build."""
+    run_ids = [run_ids] if isinstance(run_ids, str) else list(run_ids)
+    among = f"run_id IN ({','.join('?' * len(run_ids))})"
+    build = db.one(f"SELECT json_extract(metadata,'$.build_id') AS build FROM artifacts WHERE task_id=? AND {among} AND "
+                   "json_extract(metadata,'$.kind')='validation' ORDER BY created_at DESC LIMIT 1", (task_id, *run_ids))
     if not build:
         return []
-    done = {r['rule_id'] for r in db.all('SELECT rule_id FROM rule_checks WHERE task_id=? AND run_id=? AND build_id=?',
-                                         (task_id, run_id, build['build']))}
+    done = {r['rule_id'] for r in db.all(f'SELECT rule_id FROM rule_checks WHERE task_id=? AND {among} AND build_id=?',
+                                         (task_id, *run_ids, build['build']))}
     return [r['text'] for s in task_rules(db, task_id) if s['status'] in ('always', 'applied')
             for r in s['rules'] if r['level'] == 'must' and r['id'] not in done]
 

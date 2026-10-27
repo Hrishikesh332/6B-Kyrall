@@ -207,7 +207,7 @@ describe("integration catalog", () => {
       screen.getAllByRole("button").map((b) => b.getAttribute("aria-label")),
     ).toEqual([
       "Claude Code — Connect",
-      "OpenAI API — Connected",
+      "OpenAI — Connected",
       "Onshape — Connect",
       "NVIDIA Isaac Sim — Configured",
       "Bambu Studio — Not installed",

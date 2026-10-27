@@ -32,10 +32,12 @@ class Connection:
     def fields(self, with_key=True):
         key = self.key if with_key else ''
         if self.provider == 'claude':
-            return {'provider':'claude', 'claude_model':self.model, 'anthropic_api_key':key, 'model':'', 'api_key':''}
-        if self.provider == 'openai':
-            return {'provider':'openai', 'model':self.model, 'api_key':key, 'claude_model':'', 'anthropic_api_key':''}
-        return {'provider':'workshop', 'model':'', 'api_key':'', 'claude_model':'', 'anthropic_api_key':''}
+            return {'provider':'claude', 'claude_model':self.model, 'anthropic_api_key':key, 'model':'', 'api_key':'', 'openai_plan':False}
+        if self.provider in ('openai', 'chatgpt'):
+            # "chatgpt" is the OpenAI Responses API paid by the user's ChatGPT plan (OAuth token as key).
+            return {'provider':'openai', 'model':self.model, 'api_key':key, 'claude_model':'', 'anthropic_api_key':'',
+                    'openai_plan':self.provider == 'chatgpt'}
+        return {'provider':'workshop', 'model':'', 'api_key':'', 'claude_model':'', 'anthropic_api_key':'', 'openai_plan':False}
 
 
 WORKSHOP = Connection('workshop')
@@ -45,10 +47,14 @@ def from_headers(headers, with_key=False):
     """The browser's connection, or the workshop when it sends none."""
     provider = headers.get(PROVIDER_HEADER, '').strip()
     if not provider: return WORKSHOP
-    if provider not in PROVIDERS: raise ValueError('Unknown model provider')
+    if provider not in (*PROVIDERS, 'chatgpt'): raise ValueError('Unknown model provider')
     if provider == 'workshop': return WORKSHOP
     model = headers.get(MODEL_HEADER, '').strip()
     if not MODEL_PATTERN.fullmatch(model): raise ValueError('Invalid model name')
+    if provider == 'chatgpt':
+        # The token stays on the server; the caller resolves it from the browser's sign-in cookie.
+        if with_key and not model: raise ValueError('Choose a ChatGPT model in Integrations, then try again.')
+        return Connection('chatgpt', model)
     key = headers.get(KEY_HEADER, '').strip() if with_key else ''
     if len(key) > 300: raise ValueError('API key is too long')
     if with_key and not key: raise ValueError(NO_KEY)

@@ -170,4 +170,65 @@ describe("hosted keys", () => {
       "https://cad.onshape.com",
     );
   });
+
+  it("signs in with ChatGPT and keeps no ChatGPT secret in the browser", async () => {
+    const user = userEvent.setup(),
+      calls = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      const path = String(url),
+        method = init?.method || "GET";
+      calls.push([path, method]);
+      const body = path.endsWith("/integrations/chatgpt/models")
+        ? { models: [{ id: "gpt-plan", name: "GPT Plan" }] }
+        : path.endsWith("/integrations/chatgpt")
+          ? {
+              available: true,
+              signed_in: true,
+              plan_usage: true,
+              email: "ada@example.com",
+              usage_url: "https://chatgpt.com/settings/usage",
+            }
+          : overview(headersOf(init));
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    render(<ModelConnection onClose={() => {}} initialProvider="openai" />);
+    expect(
+      await screen.findByText(/Signed in with ChatGPT as ada@example.com/),
+    ).toBeTruthy();
+    await user.click(
+      await screen.findByRole("button", { name: "Use my ChatGPT plan" }),
+    );
+    await waitFor(() =>
+      expect(savedConnection(MODEL_CONNECTION)).toEqual({
+        provider: "chatgpt",
+        model: "gpt-plan",
+      }),
+    );
+    // Runs name the plan; the token is found on the server from the sign-in cookie.
+    const headers = connectionHeaders("/tasks", "POST");
+    expect(headers["X-6B-Provider"]).toBe("chatgpt");
+    expect(headers["X-6B-Key"]).toBeUndefined();
+    expect(
+      calls.some(([p, m]) => p.endsWith("/integrations/model") && m === "PUT"),
+    ).toBe(false);
+  });
+
+  it("explains when this website is not approved for ChatGPT sign-in", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      const body = String(url).endsWith("/integrations/chatgpt")
+        ? {
+            available: false,
+            reason:
+              "Sign in with ChatGPT needs OpenAI’s approval for this website.",
+          }
+        : overview(headersOf(init));
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    render(<ModelConnection onClose={() => {}} initialProvider="openai" />);
+    expect(await screen.findByText(/needs OpenAI’s approval/)).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Continue with ChatGPT" }),
+    ).toBeNull();
+    expect(screen.getByLabelText("OpenAI API key")).toBeTruthy();
+  });
 });

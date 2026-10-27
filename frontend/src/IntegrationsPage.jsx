@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, Printer } from "lucide-react";
 import { api } from "./lib.js";
 import ProviderLogo from "./ProviderLogo.jsx";
@@ -10,7 +10,7 @@ const groups = [
     name: "AI models",
     items: [
       { id: "claude", name: "Claude Code", tagline: "Your Claude account" },
-      { id: "openai", name: "OpenAI API", tagline: "Bring an API key" },
+      { id: "openai", name: "OpenAI", tagline: "ChatGPT plan or API key" },
     ],
   },
   {
@@ -46,14 +46,28 @@ function status(id, cap) {
   if (s === "connected") return { tone: "on", text: "Connected" };
   if (s === "configured") return { tone: "set", text: "Configured" };
   if (id === "bambu")
-    return s === "connected"
-      ? { tone: "on", text: "Installed" }
-      : { tone: "off", text: "Not installed" };
+    return {
+      tone: "off",
+      text: s === "available" ? "Connect" : "Not installed",
+    };
   return { tone: "off", text: id === "onshape" ? "Connect" : "Not set up" };
 }
 
 export default function IntegrationsPage({ cap, setModal }) {
-  const [isaac, setIsaac] = useState(false);
+  const [isaac, setIsaac] = useState(false),
+    [signInError, setSignInError] = useState(null);
+  useEffect(() => {
+    // Back from Sign in with ChatGPT: reopen the OpenAI connection, then tidy the URL.
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("chatgpt") && !params.has("chatgpt_error")) return;
+    setSignInError(params.get("chatgpt_error"));
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.hash,
+    );
+    setModal({ kind: "model", provider: "openai" });
+  }, []);
   const open = (id) => {
     if (models.includes(id)) setModal({ kind: "model", provider: id });
     else if (id === "onshape")
@@ -71,6 +85,11 @@ export default function IntegrationsPage({ cap, setModal }) {
         title="Integrations"
         description="Connect the accounts and tools 6B works with."
       />
+      {signInError && (
+        <p className="connection-check" role="alert">
+          {signInError}
+        </p>
+      )}
       {groups.map((group) => (
         <section className="app-group" key={group.name}>
           <h2>{group.name}</h2>

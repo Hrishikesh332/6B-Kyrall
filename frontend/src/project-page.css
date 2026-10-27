@@ -1,0 +1,231 @@
+/* Project page: a folder of chats with a shared brief, files and memory. */
+.project-page {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+.project-page-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.project-page-heading > div {
+  flex: 1;
+  min-width: 0;
+}
+.project-page-heading h1 {
+  overflow-wrap: anywhere;
+}
+.project-page-heading p {
+  margin-top: 10px;
+  color: #a8a8a8;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-line;
+  max-height: 6.4em;
+  overflow: hidden;
+}
+.project-page-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 28px;
+  margin-top: 32px;
+  align-items: start;
+}
+.project-page-grid h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.project-page-grid h2 svg {
+  color: var(--accent-text);
+}
+.project-page-grid h2 small {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 450;
+  color: #777;
+}
+.project-side {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.project-memory-hint {
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.project-memory-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.project-memory-add .secondary {
+  align-self: flex-end;
+}
+.project-memory-add textarea,
+.project-memory-list textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.project-memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.project-memory-list article {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #1c1c1c;
+}
+.project-memory-list p {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #cfcfcf;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.project-memory-list footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 11px;
+}
+.project-memory-list footer > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.project-memory-list footer .text-button {
+  font-size: 11px;
+  min-width: 0;
+}
+.project-memory-list footer small {
+  color: #777;
+}
+.project-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.project-file-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.project-file-list a {
+  color: #cfcfcf;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-file-list small {
+  color: #777;
+  flex-shrink: 0;
+}
+.sidebar-projects {
+  max-height: 46vh;
+}
+.sidebar-new-project {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8f8f8f;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar-new-project:hover {
+  color: var(--text);
+  background: #1a1a1a;
+}
+.sidebar-new-project svg {
+  color: var(--accent-text);
+}
+.workspace-location > a {
+  color: #a8a8a8;
+  white-space: nowrap;
+}
+.workspace-location > a:hover {
+  color: var(--text);
+}
+@media (max-width: 860px) {
+  .project-page-grid {
+    grid-template-columns: 1fr;
+  }
+  .project-page-heading {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 760px) {
+  .workspace-location > a {
+    display: none;
+  }
+}
+.sidebar-project {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 6px;
+}
+.sidebar-recents a.sidebar-project-folder {
+  gap: 10px;
+  color: #d6d6d6;
+  font-size: 13px;
+  min-height: 32px;
+}
+.sidebar-recents a.sidebar-project-folder svg {
+  color: #a8a8a8;
+}
+.sidebar-recents a.sidebar-project-folder.active svg {
+  color: var(--green);
+}
+.sidebar-recents a.sidebar-project-chat {
+  padding-left: 36px;
+  color: #a2a2a2;
+  font-size: 12.5px;
+}
+.sidebar-recents a.sidebar-project-chat.active {
+  color: var(--text);
+}
+.sidebar-chat-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #5b8def;
+  animation: sidebar-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes sidebar-dot-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-chat-dot {
+    animation: none;
+  }
+}

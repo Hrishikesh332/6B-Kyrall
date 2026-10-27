@@ -84,16 +84,31 @@ export default function ModelConnection({
             </div>
             {provider &&
               (overview.hosted ? (
-                <BrowserKeySetup
-                  key={provider.id}
-                  provider={provider}
-                  onConnected={async (next) => {
-                    setOverview(next);
-                    await onChanged?.();
-                    notify?.(`${next.active.name} is now running your tasks.`);
-                  }}
-                  onClose={onClose}
-                />
+                <>
+                  {provider.id === "openai" && (
+                    <ChatGPTPlan
+                      onConnected={async (next) => {
+                        setOverview(next);
+                        await onChanged?.();
+                        notify?.(
+                          `${next.active.name} is now running your tasks.`,
+                        );
+                      }}
+                    />
+                  )}
+                  <BrowserKeySetup
+                    key={provider.id}
+                    provider={provider}
+                    onConnected={async (next) => {
+                      setOverview(next);
+                      await onChanged?.();
+                      notify?.(
+                        `${next.active.name} is now running your tasks.`,
+                      );
+                    }}
+                    onClose={onClose}
+                  />
+                </>
               ) : (
                 <ProviderSetup
                   key={provider.id}
@@ -130,7 +145,9 @@ function ActiveSummary({ active }) {
           {active.source === "browser"
             ? active.provider === "workshop"
               ? "no key connected in this browser"
-              : "your key, saved in this browser"
+              : active.plan
+                ? "signed in with ChatGPT"
+                : "your key, saved in this browser"
             : active.source === "workspace"
               ? "chosen in this workspace"
               : "from backend/.env"}
@@ -329,6 +346,154 @@ function ProviderSetup({ provider, onConnected, onKeyRemoved, onClose }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// Hosted 6B: Sign in with ChatGPT pays for runs with the user's ChatGPT plan. The tokens
+// stay on the server behind an HttpOnly cookie; this browser only remembers the choice.
+function ChatGPTPlan({ onConnected }) {
+  const saved = savedConnection(MODEL_CONNECTION);
+  const [status, setStatus] = useState(null),
+    [models, setModels] = useState(null),
+    [model, setModel] = useState(
+      saved?.provider === "chatgpt" ? saved.model : "",
+    ),
+    [busy, setBusy] = useState(""),
+    [message, setMessage] = useState(null);
+  const run = async (kind, work) => {
+    setBusy(kind);
+    setMessage(null);
+    try {
+      await work();
+    } catch (err) {
+      setMessage({ ok: false, text: err.message });
+    } finally {
+      setBusy("");
+    }
+  };
+  const load = () =>
+    run("load", async () => {
+      const next = await api("/integrations/chatgpt");
+      setStatus(next);
+      if (next.signed_in && next.plan_usage) {
+        const list = (await api("/integrations/chatgpt/models")).models;
+        setModels(list);
+        setModel((current) => current || list[0]?.id || "");
+      }
+    });
+  useEffect(() => {
+    void load();
+  }, []);
+  const inUse = saved?.provider === "chatgpt";
+  if (!status) return null;
+  return (
+    <section className="provider-setup chatgpt-plan" aria-label="ChatGPT plan">
+      {!status.available ? (
+        <p className="setup-line">{status.reason}</p>
+      ) : !status.signed_in ? (
+        <>
+          <p className="setup-line">
+            Use your ChatGPT Plus or Pro plan instead of an API key.
+          </p>
+          <div className="form-actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={!!busy}
+              onClick={() =>
+                run("start", async () => {
+                  const { url } = await api("/integrations/chatgpt/start", {
+                    method: "POST",
+                  });
+                  window.location.assign(url);
+                })
+              }
+            >
+              <ProviderLogo provider="openai" size={14} />
+              {busy === "start" ? "Opening ChatGPT…" : "Continue with ChatGPT"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="setup-line">
+            Signed in with ChatGPT{status.email ? ` as ${status.email}` : ""}.{" "}
+            <a href={status.usage_url} target="_blank" rel="noreferrer">
+              Manage usage <ArrowUpRight size={12} />
+            </a>
+          </p>
+          {!status.plan_usage ? (
+            <p className="connection-check" role="status">
+              Using your ChatGPT plan was not allowed during sign-in. Sign out
+              and continue with ChatGPT again to allow it, or use an API key
+              below.
+            </p>
+          ) : (
+            <label className="export-field">
+              ChatGPT model
+              <select value={model} onChange={(e) => setModel(e.target.value)}>
+                {(models || []).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="form-actions">
+            <button
+              type="button"
+              className="secondary danger-text"
+              disabled={!!busy}
+              onClick={() =>
+                run("signout", async () => {
+                  const next = await api("/integrations/chatgpt", {
+                    method: "DELETE",
+                  });
+                  if (inUse) forgetConnection(MODEL_CONNECTION);
+                  setStatus(next);
+                  setModels(null);
+                  await onConnected(await api("/integrations/model"));
+                })
+              }
+            >
+              <Unplug size={14} /> Sign out
+            </button>
+            {status.plan_usage && (
+              <button
+                type="button"
+                className="primary"
+                disabled={!!busy || !model || (inUse && saved.model === model)}
+                onClick={() =>
+                  run("use", async () => {
+                    // No secret here: the server finds the tokens from the sign-in cookie.
+                    saveConnection(
+                      MODEL_CONNECTION,
+                      { provider: "chatgpt", model },
+                      true,
+                    );
+                    await onConnected(await api("/integrations/model"));
+                  })
+                }
+              >
+                {inUse ? "Save changes" : "Use my ChatGPT plan"}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+      {message && (
+        <p
+          className={`connection-check${message.ok ? " ok" : ""}`}
+          role="status"
+        >
+          {message.text}
+        </p>
+      )}
+      <p className="connect-note">
+        <KeyRound size={13} /> Or use an OpenAI API key:
+      </p>
+    </section>
   );
 }
 

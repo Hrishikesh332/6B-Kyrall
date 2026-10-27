@@ -2,6 +2,7 @@ import { Cpu } from "lucide-react";
 // Official product marks from @lobehub/icons-static-svg (MIT). They are served as
 // files (?no-inline) because the Content-Security-Policy blocks data: images.
 import claude from "@lobehub/icons-static-svg/icons/claudecode-color.svg?no-inline";
+import anthropic from "@lobehub/icons-static-svg/icons/anthropic.svg?no-inline";
 import openai from "@lobehub/icons-static-svg/icons/openai.svg?no-inline";
 import nvidia from "@lobehub/icons-static-svg/icons/nvidia-color.svg?no-inline";
 // Cube mark from the official logo in onshape.com's site header (wordmark removed).
@@ -9,6 +10,8 @@ import onshape from "./logos/onshape.svg?no-inline";
 
 const logos = {
   claude: { src: claude, name: "Claude Code" },
+  // Model makers, for the model tag on a chat.
+  anthropic: { src: anthropic, name: "Anthropic", mono: true },
   // Single-color mark drawn in currentColor, which an <img> renders black.
   openai: { src: openai, name: "OpenAI", mono: true },
   nvidia: { src: nvidia, name: "NVIDIA" },

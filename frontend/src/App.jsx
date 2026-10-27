@@ -19,6 +19,9 @@ import {
   Menu,
   Settings2,
   ListTodo,
+  Folder,
+  FolderOpen,
+  FolderPlus,
   MessageSquare,
   X,
 } from "lucide-react";
@@ -45,10 +48,13 @@ import {
 } from "./pages.jsx";
 import TaskPage from "./TaskPage.jsx";
 import ArtifactPreview from "./ArtifactPreview.jsx";
+import ProjectPage from "./ProjectPage.jsx";
+import SignIn, { GoogleMark } from "./SignIn.jsx";
+import { authConfig, signInWithGoogle, signOut } from "./auth.js";
 
 const navigation = [
-  ["new", "New project", Plus],
-  ["tasks", "Projects", ListTodo],
+  ["new", "New chat", Plus],
+  ["tasks", "Chats", ListTodo],
   ["files", "Assets", Files],
   ["integrations", "Integrations", Cpu],
   ["schedules", "Jobs", Clock3],
@@ -88,6 +94,83 @@ function WorkspaceAvatar() {
   return uri ? <img className="profile-avatar" src={uri} alt="" /> : null;
 }
 
+// The Google account's photo, or its initial when it has none.
+function AccountAvatar({ user }) {
+  const [failed, setFailed] = useState(false);
+  if (user.picture && !failed)
+    return (
+      <img
+        className="profile-avatar google"
+        src={user.picture}
+        alt=""
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    );
+  return (
+    <span className="profile-avatar google initial" aria-hidden="true">
+      {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
+// Top right: "Sign in with Google" while signed out, the account once signed in.
+function TopbarAccount({ auth, notify, boot, openSettings }) {
+  const [busy, setBusy] = useState(false);
+  if (auth.user)
+    return (
+      <button
+        className="topbar-account signed-in"
+        onClick={openSettings}
+        aria-label={`Account: ${auth.user.email}`}
+        title={auth.user.email}
+      >
+        <AccountAvatar user={auth.user} />
+        <span>{auth.user.name?.split(" ")[0] || auth.user.email}</span>
+      </button>
+    );
+  const signIn = async () => {
+    setBusy(true);
+    try {
+      const user = await signInWithGoogle(auth.firebase);
+      if (!user) return;
+      await boot();
+      notify(
+        `Signed in as ${user.email}. Your chats are being saved to your account.`,
+      );
+    } catch (err) {
+      notify(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      className="topbar-account google-button"
+      onClick={signIn}
+      disabled={busy}
+      aria-busy={busy || undefined}
+    >
+      <GoogleMark />
+      {busy ? "Signing in…" : "Sign in with Google"}
+    </button>
+  );
+}
+
+const activeStatuses = new Set(["queued", "running", "awaiting_input"]);
+
+// A project's latest chats, with live task updates taking precedence.
+function projectChats(project, tasks) {
+  const live = tasks.filter((t) => t.project_id === project.id);
+  const ids = new Set(tasks.map((t) => t.id));
+  return [
+    ...live,
+    ...(project.recent_chats || []).filter((t) => !ids.has(t.id)),
+  ]
+    .sort((a, b) => b.updated_at - a.updated_at)
+    .slice(0, 5);
+}
+
 export default function App() {
   const [route, setRoute] = useState(currentRoute);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -100,9 +183,12 @@ export default function App() {
   const [modal, setModal] = useState(null),
     [preview, setPreview] = useState(null),
     [toast, setToast] = useState("");
+  // Google sign-in: { enabled, firebase, user } from the server; null until known.
+  const [auth, setAuth] = useState(null);
   const [revision, setRevision] = useState(0),
     [projectId, setProjectId] = useState("");
-  const [taskTitle, setTaskTitle] = useState("");
+  const [taskTitle, setTaskTitle] = useState(""),
+    [taskProject, setTaskProject] = useState(null);
   const toastTimer = useRef(null);
   const sidebar = useRef(null);
   useEffect(() => {
@@ -141,6 +227,9 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
+      const account = await authConfig();
+      setAuth(account);
+      if (account.required && !account.user) return;
       const c = await api("/capabilities");
       setCap(c);
       await refreshSidebar();
@@ -159,12 +248,19 @@ export default function App() {
       setPreview(null);
     };
     const unlock = () => setModal({ kind: "token" });
+    // The session cookie expired or was signed out elsewhere.
+    const signedOut = () => {
+      setModal(null);
+      setAuth((account) => account && { ...account, user: null });
+    };
     window.addEventListener("hashchange", change);
     window.addEventListener("6b:unlock", unlock);
+    window.addEventListener("6b:sign-in", signedOut);
     void boot();
     return () => {
       window.removeEventListener("hashchange", change);
       window.removeEventListener("6b:unlock", unlock);
+      window.removeEventListener("6b:sign-in", signedOut);
       clearTimeout(toastTimer.current);
     };
   }, [boot]);
@@ -192,6 +288,10 @@ export default function App() {
     [navigate],
   );
   const openTask = useCallback((id) => navigate(`task=${id}`), [navigate]);
+  const openProject = useCallback(
+    (id) => navigate(`project=${id}`),
+    [navigate],
+  );
   const openArtifact = useCallback(
     (taskId, artifactId) => setPreview({ taskId, artifactId }),
     [],
@@ -224,6 +324,7 @@ export default function App() {
   );
   const onTaskChange = useCallback((task) => {
     setTaskTitle(task.title);
+    setTaskProject(task.project_id || null);
     setTasks((list) =>
       [{ ...task }, ...list.filter((x) => x.id !== task.id)]
         .filter((x) => !x.archived)
@@ -231,11 +332,24 @@ export default function App() {
         .slice(0, 15),
     );
   }, []);
-  const page = route.startsWith("task=") ? "task" : route;
+  const page = route.startsWith("task=")
+    ? "task"
+    : route.startsWith("project=")
+      ? "project"
+      : route;
+  const routeProject = page === "project" ? route.slice(8) : taskProject;
+  const crumbProject =
+    page === "project" || page === "task"
+      ? projects.find((p) => p.id === routeProject)
+      : null;
   const title =
     page === "task"
       ? taskTitle
-      : navigation.find((x) => x[0] === page)?.[1] || "Overview";
+      : page === "project"
+        ? crumbProject?.name || "Project"
+        : page === "projects"
+          ? "Projects"
+          : navigation.find((x) => x[0] === page)?.[1] || "Overview";
   useEffect(() => {
     document.title = `${title} — 6B`;
   }, [title]);
@@ -283,6 +397,8 @@ export default function App() {
     changed,
     revision,
   };
+  if (auth?.required && !auth.user)
+    return <SignIn config={auth.firebase} onSignedIn={boot} />;
   return (
     <>
       <a
@@ -365,25 +481,88 @@ export default function App() {
             </a>
           ))}
         </nav>
+        <details className="sidebar-recents sidebar-projects" open>
+          <summary>
+            Projects
+            <ChevronDown size={13} />
+          </summary>
+          <div className="sidebar-recent-links">
+            <button
+              className="sidebar-new-project"
+              onClick={() => {
+                setMenuOpen(false);
+                setModal({ kind: "project" });
+              }}
+            >
+              <FolderPlus size={14} />
+              <span>New project</span>
+            </button>
+            {projects.slice(0, 8).map((p) => {
+              const chats = projectChats(p, tasks);
+              return (
+                <div className="sidebar-project" key={p.id}>
+                  <a
+                    href={`#project=${p.id}`}
+                    onClick={() => setMenuOpen(false)}
+                    className={`sidebar-project-folder ${page === "project" && routeProject === p.id ? "active" : ""}`}
+                    title={p.name}
+                  >
+                    {chats.length ? (
+                      <FolderOpen size={16} strokeWidth={1.6} />
+                    ) : (
+                      <Folder size={16} strokeWidth={1.6} />
+                    )}
+                    <span>{p.name}</span>
+                  </a>
+                  {chats.map((task) => (
+                    <a
+                      key={task.id}
+                      href={`#task=${task.id}`}
+                      onClick={() => setMenuOpen(false)}
+                      className={`sidebar-project-chat ${route === `task=${task.id}` ? "active" : ""}`}
+                      title={task.title}
+                    >
+                      <span>{task.title}</span>
+                      {activeStatuses.has(task.status) && (
+                        <i className="sidebar-chat-dot" aria-label="Running" />
+                      )}
+                    </a>
+                  ))}
+                </div>
+              );
+            })}
+            {projects.length > 8 && (
+              <a href="#projects" onClick={() => setMenuOpen(false)}>
+                <Folder size={14} />
+                <span>All projects</span>
+              </a>
+            )}
+          </div>
+        </details>
         <details className="sidebar-recents">
           <summary>
             Recent work
             <ChevronDown size={13} />
           </summary>
           <div className="sidebar-recent-links">
-            {tasks.slice(0, 6).map((task) => (
-              <a
-                key={task.id}
-                href={`#task=${task.id}`}
-                onClick={() => setMenuOpen(false)}
-                className={route === `task=${task.id}` ? "active" : ""}
-                title={task.title}
-              >
-                <MessageSquare size={14} />
-                <span>{task.title}</span>
-              </a>
-            ))}
-            {!tasks.length && <p>Your designs will appear here.</p>}
+            {tasks
+              .filter((task) => !task.project_id)
+              .slice(0, 6)
+              .map((task) => (
+                <a
+                  key={task.id}
+                  href={`#task=${task.id}`}
+                  onClick={() => setMenuOpen(false)}
+                  className={route === `task=${task.id}` ? "active" : ""}
+                  title={task.title}
+                >
+                  <MessageSquare size={14} />
+                  <span>{task.title}</span>
+                </a>
+              ))}
+            {!tasks.some((task) => !task.project_id) && (
+              <p>Your designs will appear here.</p>
+            )}
           </div>
         </details>
         <div className="sidebar-footer">
@@ -400,11 +579,23 @@ export default function App() {
             }}
             aria-label="Workspace settings"
           >
-            <WorkspaceAvatar />
-            <span>
-              <strong>Personal workspace</strong>
-              <small>Saved on this computer</small>
-            </span>
+            {auth?.user ? (
+              <>
+                <AccountAvatar user={auth.user} />
+                <span>
+                  <strong>{auth.user.name || auth.user.email}</strong>
+                  <small>{auth.user.email}</small>
+                </span>
+              </>
+            ) : (
+              <>
+                <WorkspaceAvatar />
+                <span>
+                  <strong>Personal workspace</strong>
+                  <small>Saved on this computer</small>
+                </span>
+              </>
+            )}
             <Settings2 size={16} />
           </button>
         </div>
@@ -423,6 +614,12 @@ export default function App() {
           <div className="workspace-location">
             <span>Personal workspace</span>
             <ChevronRight size={13} />
+            {page === "task" && crumbProject && (
+              <>
+                <a href={`#project=${crumbProject.id}`}>{crumbProject.name}</a>
+                <ChevronRight size={13} />
+              </>
+            )}
             <strong>{title}</strong>
           </div>
           {!connected && (
@@ -430,6 +627,14 @@ export default function App() {
               <span className="status-dot offline" />
               Disconnected
             </span>
+          )}
+          {auth?.enabled && (
+            <TopbarAccount
+              auth={auth}
+              notify={notify}
+              boot={boot}
+              openSettings={() => setModal({ kind: "settings" })}
+            />
           )}
         </header>
         <div className="workspace-shell">
@@ -452,6 +657,7 @@ export default function App() {
                       tasks={tasks}
                       projects={projects}
                       cap={cap}
+                      refreshCap={refreshCap}
                       projectId={projectId}
                       createTask={createTask}
                       openTask={openTask}
@@ -463,7 +669,17 @@ export default function App() {
                     <ProjectsPage
                       {...common}
                       projects={projects}
-                      newTask={newTask}
+                      openProject={openProject}
+                    />
+                  )}
+                  {page === "project" && (
+                    <ProjectPage
+                      {...common}
+                      id={route.slice(8)}
+                      cap={cap}
+                      projects={projects}
+                      createTask={createTask}
+                      onModelChange={refreshCap}
                     />
                   )}
                   {page === "files" && <FilesPage {...common} />}
@@ -480,7 +696,7 @@ export default function App() {
                     />
                   )}
                   {!navigation.some((x) => x[0] === page) &&
-                    page !== "task" && (
+                    !["task", "project", "projects"].includes(page) && (
                       <div className="page">
                         <h1>Page not found</h1>
                         <button
@@ -532,6 +748,7 @@ export default function App() {
         <ModalContent
           modal={modal}
           cap={cap}
+          user={auth?.user}
           close={closeModal}
           boot={boot}
           changed={changed}
@@ -551,6 +768,7 @@ export function Home({
   tasks,
   projects,
   cap,
+  refreshCap,
   projectId,
   createTask,
   openTask,
@@ -583,6 +801,7 @@ export function Home({
               initial
               projects={projects}
               cap={cap}
+              onModelChange={refreshCap}
               onSubmit={createTask}
               projectId={projectId}
               draft={draft}
@@ -692,6 +911,7 @@ export function Home({
 function ModalContent({
   modal,
   cap,
+  user,
   close,
   boot,
   changed,
@@ -776,7 +996,30 @@ function ModalContent({
               Change
             </button>
           </div>
-          <p>Projects and files stay on this computer.</p>
+          {user ? (
+            <div className="settings-mode">
+              <AccountAvatar user={user} />
+              <div>
+                <strong>{user.name || user.email}</strong>
+                <p>{user.email}</p>
+              </div>
+              <button
+                className="secondary"
+                onClick={async () => {
+                  close();
+                  await signOut();
+                  await boot();
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          ) : null}
+          <p>
+            {user
+              ? "Your chats are copied to the cloud as each run starts and finishes."
+              : "Projects and files stay on this computer."}
+          </p>
           <a
             className="text-button"
             href="/docs"
@@ -926,12 +1169,16 @@ function ProjectDialog({ modal, close, changed, notify }) {
       onClose={close}
       submitLabel="Save project"
       onSubmit={async (data) => {
-        await api(`/projects${project.id ? `/${project.id}` : ""}`, {
-          method: project.id ? "PATCH" : "POST",
-          body: data,
-        });
+        const saved = await api(
+          `/projects${project.id ? `/${project.id}` : ""}`,
+          {
+            method: project.id ? "PATCH" : "POST",
+            body: data,
+          },
+        );
         await changed();
         notify("Project saved.");
+        if (!project.id) location.hash = `project=${saved.id}`;
       }}
     >
       <label>

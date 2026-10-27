@@ -84,7 +84,10 @@ export async function api(path, { body, raw, ...options } = {}) {
   const response = await fetch(`/api${path}`, { ...options, headers, body });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    if (response.status === 401) window.dispatchEvent(new Event("6b:unlock"));
+    if (response.status === 401)
+      window.dispatchEvent(
+        new Event(data.sign_in ? "6b:sign-in" : "6b:unlock"),
+      );
     throw new APIError(
       typeof data.detail === "string"
         ? data.detail

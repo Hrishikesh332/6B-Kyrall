@@ -8,6 +8,7 @@ import {
   ClipboardList,
   File,
   Files,
+  HandGrab,
   MessageSquare,
   Paperclip,
   Pause,
@@ -20,12 +21,14 @@ import {
 import { api, deliveredArtifacts, latestArtifacts } from "./lib.js";
 import { renderText } from "../format.js";
 import { useResource, useTask } from "./hooks.js";
-import ObjectCapture from "./ObjectCapture.jsx";
+import PhotoAttachments, { maxPhotos, photoTypes } from "./PhotoAttachments.jsx";
 import SimulationPanel from "./SimulationPanel.jsx";
+import PickPlacePanel from "./PickPlacePanel.jsx";
 import { EvidenceContent } from "./EvidencePanel.jsx";
 import ExecutionSummary from "./ExecutionSummary.jsx";
 import TaskChecklist from "./TaskChecklist.jsx";
 import TaskRules from "./TaskRules.jsx";
+import ModelTag from "./ModelTag.jsx";
 import { ApprovalCard, ApprovalPolicy, ParameterChange } from "./Approval.jsx";
 import AgentTrace from "./AgentTrace.jsx";
 import { buildTimeline } from "./trace.js";
@@ -59,7 +62,9 @@ export default function TaskPage({
     true,
   );
   const [tab, setTab] = useState("conversation"),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [photos, setPhotos] = useState([]),
+    [dragging, setDragging] = useState(false);
   const uploadInput = useRef(null),
     end = useRef(null),
     priorCount = useRef(0);
@@ -100,11 +105,30 @@ export default function TaskPage({
     ) || artifacts.find((a) => a.metadata.kind === "cad");
   const lastError = task.runs.at(-1)?.error;
   const timeline = buildTimeline(task.messages, activity, audit.data?.tools);
-  const upload = async (e) => {
+  const upload = (e) => {
     const files = [...e.target.files];
     e.target.value = "";
+    return attach(files);
+  };
+  // Photos wait in the composer so they can be tagged before sending.
+  const attach = async (files) => {
+    const images = files.filter((f) => photoTypes.includes(f.type));
+    const others = files.filter((f) => !photoTypes.includes(f.type));
+    const room = maxPhotos - photos.length;
+    if (images.length > room)
+      notify(`Attach up to ${maxPhotos} photos per message.`);
+    const staged = images.slice(0, Math.max(room, 0)).map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+      role: "object",
+    }));
+    if (staged.length) {
+      setPhotos((current) => [...current, ...staged]);
+      setTab("conversation");
+    }
+    if (!others.length) return;
     await action(async () => {
-      for (const file of files) {
+      for (const file of others) {
         const body = new FormData();
         body.append("file", file);
         await api(`/tasks/${id}/uploads`, { method: "POST", body });
@@ -113,10 +137,27 @@ export default function TaskPage({
     });
   };
   const send = async ({ prompt }) => {
+    let content = prompt;
+    if (photos.length) {
+      const sent = [];
+      for (const photo of photos) {
+        const body = new FormData();
+        body.append("file", photo.file);
+        body.append("role", photo.role);
+        const artifact = await api(`/tasks/${id}/uploads`, {
+          method: "POST",
+          body,
+        });
+        sent.push(`${artifact.name} (${photo.role})`);
+        // A retry after a partial failure must not re-upload this photo.
+        setPhotos((current) => current.filter((p) => p.id !== photo.id));
+      }
+      content = `${prompt || "Use the attached photos."}\n\nAttached photos: ${sent.join(", ")}.`;
+    }
     await api(`/tasks/${id}/messages`, {
       method: "POST",
       headers: { "Idempotency-Key": crypto.randomUUID() },
-      body: { content: prompt },
+      body: { content },
     });
     await refresh();
   };
@@ -141,6 +182,7 @@ export default function TaskPage({
             <div className="task-meta">
               <Badge status={task.status} />
               <span>{artifacts.length} deliverables</span>
+              <ModelTag runs={task.runs} />
               <ApprovalPolicy task={task} refresh={refresh} />
             </div>
           </div>
@@ -244,8 +286,8 @@ export default function TaskPage({
         {[
           ["conversation", "Conversation", MessageSquare],
           ["files", "Files", Files],
+          ["motion", "Pick & place", HandGrab],
           ["evidence", "Details", ClipboardList],
-          ["object", "Object photos", Box],
           ["simulation", "Simulation", Activity],
         ].map(([key, label, Icon]) => (
           <button
@@ -269,6 +311,16 @@ export default function TaskPage({
       {error && <ErrorNotice error={error} retry={refresh} />}
       {lastError && <ErrorNotice error={lastError} />}
       <div className="task-panels">
+        {tab === "motion" && (
+          <section
+            role="tabpanel"
+            id="panel-motion"
+            aria-labelledby="tab-motion"
+            key="motion"
+          >
+            <PickPlacePanel task={task} />
+          </section>
+        )}
         {tab === "simulation" && (
           <section
             role="tabpanel"
@@ -281,22 +333,6 @@ export default function TaskPage({
               task={task}
               refresh={refresh}
               openArtifact={openArtifact}
-            />
-          </section>
-        )}
-        {tab === "object" && (
-          <section
-            role="tabpanel"
-            id="panel-object"
-            aria-labelledby="tab-object"
-            key="object"
-          >
-            <ObjectCapture
-              key={id}
-              task={task}
-              cap={cap}
-              refresh={refresh}
-              notify={notify}
             />
           </section>
         )}
@@ -386,13 +422,32 @@ export default function TaskPage({
               activity={activity}
               status={task.status}
             />
-            <div className="task-composer">
+            <div
+              className={`task-composer ${dragging ? "dragging" : ""}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget))
+                  setDragging(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragging(false);
+                void attach([...e.dataTransfer.files]);
+              }}
+            >
               <Composer
                 cap={cap}
                 onSubmit={send}
                 contextScope={task.context_scope}
                 disabled={task.status === "awaiting_input"}
                 onUpload={() => uploadInput.current.click()}
+                hasAttachments={photos.length > 0}
+                attachments={
+                  <PhotoAttachments photos={photos} onChange={setPhotos} />
+                }
               />
               <p className="composer-note">
                 {task.status === "awaiting_input"
@@ -503,6 +558,9 @@ function Message({ message: m, task, refresh }) {
         <div className="attachment">
           <Paperclip size={15} />
           {m.content.name}
+          {m.content.role && (
+            <span className="photo-role">{m.content.role}</span>
+          )}
         </div>
       ) : m.role === "assistant" ? (
         <div

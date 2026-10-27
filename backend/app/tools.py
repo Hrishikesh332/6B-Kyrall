@@ -19,6 +19,17 @@ from .rules import ChooseRulesInput, RuleChecksInput
 from .models import StrictModel as _Strict
 
 
+# Refusals that ask the model to do something else first (decide rules, get a plan approved),
+# and outside sources it cannot fix, are not tool failures: they must not block completion.
+GATE_CODES = {'tool_unavailable', 'approval_required', 'rules_decision_required', 'reference_unavailable'}
+
+
+def unresolved_error(result):
+    if isinstance(result, dict) and result.get('error') and result.get('code') not in GATE_CODES:
+        return result['error']
+    return None
+
+
 class SliceInput(_Strict):
     build_id: str | None = None
     # Part names to put on the plate; by default every printed part (reference parts like *_ref are left out).
@@ -91,12 +102,12 @@ def tool_available(name, settings):
     return (name in TOOL_SPECS
             and (name != 'fetch_reference' or bool(settings.reference_domains))
             and (name != 'inspect_image' or settings.provider in VISION_PROVIDERS)
-            and (name != 'slice_with_bambu' or bambu_installed()))
+            and (name != 'slice_with_bambu' or bambu_connected(settings)))
 
 
-def bambu_installed():
-    from .bambu import binary
-    return binary() is not None
+def bambu_connected(settings):
+    from .bambu import Store
+    return Store(settings.data_dir).connected()
 
 
 def tool_definitions(settings):
@@ -257,6 +268,8 @@ class ToolRunner:
             return self.db.request_approval(tid,rid,args)
         if name == 'slice_with_bambu':
             from .bambu import Store, slice_build
+            if not Store(self.settings.data_dir).connected():
+                return failure('tool_unavailable','Bambu Studio is not connected for this workspace; rely on the built-in printability check.')
             work=self.settings.data_dir/'workspaces'/tid/rid
             return await asyncio.to_thread(slice_build,self.db,self.store,Store(self.settings.data_dir),tid,rid,args.get('build_id'),work,args.get('parts'))
         if name == 'choose_rules':
@@ -298,14 +311,22 @@ class ToolRunner:
         if name == 'package_artifacts':
             return self.store.package(tid,rid,args['name'],args['artifact_ids'])
         if name == 'save_memory':
+            # A chat's memories belong to its project; context_scope only limits what a chat reads.
+            project = self.db.require_task(tid)['project_id']
             with self.db.transaction() as c:
-                c.execute('INSERT INTO memories VALUES(?,?,?,?)',(uid(),tid,encode(args['content']),time.time()))
+                c.execute('INSERT INTO memories(id,task_id,project_id,content,created_at) VALUES(?,?,?,?,?)',(uid(),tid,project,encode(args['content']),time.time()))
             return {'saved':True}
         if name == 'search_context':
             return self.search_context(tid,args['query'])
         if name == 'fetch_reference':
             from .reference_reader import fetch
-            return await fetch(self,tid,rid,args)
+            try:
+                return await fetch(self,tid,rid,args)
+            except (ValueError,httpx.HTTPError) as exc:
+                # A site refusing or a host outside the allowlist is outside the agent's control:
+                # report it, but do not hold delivery hostage to it.
+                return failure('reference_unavailable',f'{type(exc).__name__}: {str(exc)[:600]}',
+                               hint='Cite a reference already fetched in this task, or state the dimension as a labelled assumption.')
         if name == 'inspect_image':
             row,path=self.store.get(tid,args['artifact_id'])
             if row['metadata'].get('kind') not in ('preview_image','reference_page','reference_image') or path.suffix!='.png' or row['size']>8_000_000:
@@ -372,10 +393,10 @@ class ToolRunner:
         task = self.db.require_task(tid)
         where, params = 'm.task_id=?', [tid]
         if task['context_scope'] == 'project':
-            where, params = 't.project_id=?', [task['project_id']]
+            where, params = 'm.project_id=?', [task['project_id']]
         elif task['context_scope'] == 'workspace':
-            where, params = "(t.project_id IS NULL OR t.project_id=? OR p.memory_scope='workspace')", [task['project_id']]
-        rows = self.db.all(f'SELECT m.*,t.title FROM memories m JOIN tasks t ON t.id=m.task_id LEFT JOIN projects p ON p.id=t.project_id WHERE {where} ORDER BY m.created_at DESC LIMIT 100',params)
+            where, params = "(m.project_id IS NULL OR m.project_id=? OR p.memory_scope='workspace')", [task['project_id']]
+        rows = self.db.all(f"SELECT m.*,COALESCE(t.title,'Project note') AS title FROM memories m LEFT JOIN tasks t ON t.id=m.task_id LEFT JOIN projects p ON p.id=m.project_id WHERE {where} ORDER BY m.created_at DESC LIMIT 100",params)
         terms = query.lower().split()
         ranked = sorted(rows,key=lambda r: sum(w in (r['content']+' '+r['title']).lower() for w in terms),reverse=True)
         matches = [r for r in ranked if any(w in (r['content']+' '+r['title']).lower() for w in terms)][:5]

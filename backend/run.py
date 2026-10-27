@@ -18,3 +18,5 @@ if __name__ == '__main__':
         serve(app,listen=f'{host}:{port}',threads=12,**proxy)
     finally:
         app.state.runtime.close()
+        # Let the last cloud copies finish writing.
+        app.state.cloud.close()

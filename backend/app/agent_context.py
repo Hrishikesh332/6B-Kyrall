@@ -61,10 +61,16 @@ def task_context(engine, run):
     rules = agent_view(db, tid)
     if rules: context['rules'] = rules
     context['artifacts'] = _artifact_index(db.all('SELECT id,name,version,metadata FROM artifacts WHERE task_id=? ORDER BY created_at DESC LIMIT 60',(tid,)))
-    from .image_intake import latest_image_set
+    from .image_intake import latest_image_set, photo_attachments
     image_set, capture = latest_image_set(db,engine.runner.store,tid)
     if image_set:
         context['object_image_set'] = {'artifact_id':image_set['id'],**capture}
+    photos = photo_attachments(db,tid)
+    if photos:
+        context['photo_attachments'] = {'photos':photos,
+            'roles':{'object':'the item to reconstruct as CAD or to be grasped; size grippers around it',
+                     'gripper':'existing gripper or end-effector hardware to match, mount to or improve'},
+            'guidance':'Inspect each photo with inspect_image before relying on it. Photos carry no scale; ask for or use measured dimensions and label estimates.'}
     context['recent_tool_results'] = _recent_results(compact_result(db.all('SELECT name,result FROM tool_calls WHERE run_id=? AND status=? ORDER BY started_at DESC LIMIT 12',(run['id'],'completed'))))
     from .audit import task_audit
     evidence=task_audit(db,tid)
@@ -73,6 +79,8 @@ def task_context(engine, run):
     if task['project_id']:
         project = db.one('SELECT * FROM projects WHERE id=?',(task['project_id'],))
         context['project_brief'] = project['brief']
+        memory = db.project_memory(task)
+        if memory: context['project_memory'] = memory
         context['reference_excerpts'] = []
         root=(engine.settings.data_dir/'project_files').resolve()
         for file in db.all('SELECT * FROM project_files WHERE project_id=? ORDER BY created_at DESC LIMIT 8',(task['project_id'],)):

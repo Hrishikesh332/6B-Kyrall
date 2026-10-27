@@ -13,6 +13,11 @@ async def test_bambu_profiles_slice_and_agent_tool(app):
     async with httpx.AsyncClient(transport=AsyncWSGITransport(app=app), base_url='http://testserver') as c:
         status = (await c.get('/api/integrations/bambu')).json()
         assert status['installed'] and status['bed_mm'][0] > 150
+        # Off until the user connects it: no agent tool, and slicing is refused.
+        from app.tools import tool_definitions
+        assert not status['connected'] and 'slice_with_bambu' not in {t['name'] for t in tool_definitions(app.state.settings)}
+        caps = (await c.get('/api/capabilities')).json()
+        assert next(i for i in caps['integrations'] if i['name'] == 'Bambu Studio')['status'] == 'available'
         options = (await c.get('/api/integrations/bambu/profiles', params={'machine': 'Bambu Lab A1 0.4 nozzle'})).json()
         assert 'Bambu PLA Basic @BBL A1' in options['filaments']
         bad = await c.put('/api/integrations/bambu', json={'machine': 'Bambu Lab A1 0.4 nozzle',
@@ -21,7 +26,8 @@ async def test_bambu_profiles_slice_and_agent_tool(app):
         process = next(p for p in options['processes'] if p.startswith('0.20mm Standard'))
         saved = (await c.put('/api/integrations/bambu', json={'machine': 'Bambu Lab A1 0.4 nozzle', 'process': process,
                              'filament': 'Bambu PLA Basic @BBL A1'})).json()
-        assert saved['settings']['filament'] == 'Bambu PLA Basic @BBL A1'
+        assert saved['settings']['filament'] == 'Bambu PLA Basic @BBL A1' and saved['connected']
+        assert 'slice_with_bambu' in {t['name'] for t in tool_definitions(app.state.settings)}
 
         tid = db.create_task(TaskCreate(prompt='Enclosure'))
         run = db.claim()
@@ -39,6 +45,11 @@ async def test_bambu_profiles_slice_and_agent_tool(app):
         assert again['printer'] == 'Bambu Lab A1 0.4 nozzle'
         caps = (await c.get('/api/capabilities')).json()
         assert next(i for i in caps['integrations'] if i['name'] == 'Bambu Studio')['status'] == 'connected'
+        off = (await c.delete('/api/integrations/bambu')).json()
+        assert not off['connected'] and off['settings']['machine'] == 'Bambu Lab A1 0.4 nozzle'
+        refused = await runner.execute(tid, run['id'], 's4', 'slice_with_bambu', {})
+        assert refused['code'] == 'tool_unavailable'
+        assert (await c.post(f'/api/tasks/{tid}/slice')).status_code == 422
 
 
 def test_reference_parts_are_left_off_the_plate():

@@ -654,6 +654,14 @@ pre {
   color: #aaa;
   white-space: nowrap;
 }
+.model-picker select {
+  font-size: 12px;
+  padding: 8px 26px 8px 10px;
+  max-width: 190px;
+  background: #202020;
+  border: 1px solid #363636;
+  border-radius: 4px;
+}
 .composer-model .status-dot {
   background: var(--green);
   width: 6px;
@@ -2406,107 +2414,11 @@ dialog::backdrop {
 }
 
 /* Object reconstruction, assembly exploration and Isaac evidence. */
-.object-capture,
-.simulation-panel {
-  display: grid;
-  gap: 22px;
-  padding: 24px 0 40px;
-  max-width: 1040px;
-}
-.object-capture > label,
-.capture-dimensions label,
 .assembly-controls label {
   display: grid;
   gap: 8px;
   font-size: 12px;
   color: var(--text-secondary, #aaa);
-}
-.object-capture input:not([type="radio"]),
-.object-capture textarea,
-.object-capture select {
-  width: 100%;
-}
-.capture-objective {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.capture-objective > label {
-  display: grid;
-  grid-template-columns: 20px 1fr;
-  gap: 8px;
-  border: 1px solid #33343a;
-  border-radius: 12px;
-  padding: 20px;
-  cursor: pointer;
-}
-.capture-objective > label.selected {
-  border-color: #b6a4e2;
-  background: #b6a4e20b;
-}
-.capture-objective small {
-  grid-column: 2;
-  color: #aaa;
-  line-height: 1.5;
-}
-.capture-views {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
-}
-.capture-photo {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  border: 1px solid #34343d;
-  border-radius: 12px;
-  padding: 10px;
-  min-width: 0;
-}
-.capture-photo > img {
-  width: 100%;
-  height: 150px;
-  object-fit: contain;
-  background: #17181d;
-  border-radius: 8px;
-}
-.capture-photo > div {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.capture-photo small {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: #aaa;
-}
-.capture-add {
-  min-height: 210px;
-  border: 1px dashed #62616d;
-  background: transparent;
-  border-radius: 12px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 12px;
-}
-.capture-add small {
-  font-size: 11px;
-  color: #aaa;
-}
-.capture-dimensions {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-.capture-note,
-.simulation-export > small {
-  display: block;
-  color: #a7a7b1;
-  font-size: 12px;
-  line-height: 1.7;
 }
 .assembly-toolbar {
   display: flex;
@@ -2577,75 +2489,7 @@ dialog::backdrop {
 .view-buttons [aria-pressed="true"] {
   color: #decafa;
 }
-.simulation-summary,
-.simulation-export {
-  padding: 22px;
-  border: 1px solid #33343a;
-  border-radius: 12px;
-}
-.simulation-summary > div {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.simulation-summary p,
-.simulation-export p {
-  color: #aaa;
-  line-height: 1.7;
-  font-size: 13px;
-}
-.simulation-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-.simulation-metrics > div {
-  display: grid;
-  gap: 12px;
-  padding: 18px;
-  background: #ffffff04;
-  border: 1px solid #33343a;
-  border-radius: 10px;
-}
-.simulation-metrics small {
-  color: #aaa;
-}
-.simulation-viewport {
-  min-height: 280px;
-  background: #111217;
-  border: 1px solid #33343a;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-}
-.simulation-viewport > div {
-  text-align: center;
-  color: #8d8c9a;
-}
-.simulation-viewport img {
-  width: 100%;
-  max-height: 640px;
-  object-fit: contain;
-}
-.simulation-export select {
-  margin: 12px 12px 12px 0;
-  max-width: 100%;
-}
-.simulation-export > small {
-  margin: 16px 0;
-}
 @media (max-width: 700px) {
-  .capture-objective,
-  .capture-dimensions,
-  .simulation-metrics {
-    grid-template-columns: 1fr 1fr;
-  }
-  .simulation-panel .section-heading {
-    align-items: flex-start;
-    gap: 12px;
-  }
   .assembly-toolbar {
     flex-wrap: wrap;
   }
@@ -2654,9 +2498,6 @@ dialog::backdrop {
   }
   .task-page .tabs button {
     white-space: nowrap;
-  }
-  .capture-objective > label {
-    padding: 12px;
   }
 }
 /* Keep the model visible while scrubbing controls lower in the preview panel. */

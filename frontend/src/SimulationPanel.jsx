@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, Camera, RefreshCw } from "lucide-react";
+import { Camera, RefreshCw, FileBox, FileJson } from "lucide-react";
 import { api, latestArtifacts } from "./lib.js";
 import { ErrorNotice, Loading } from "./ui.jsx";
+
+const sourceKinds = ["cad_source", "cad_script"];
 
 export default function SimulationPanel({ task, refresh, openArtifact }) {
   const [status, setStatus] = useState(null),
     [error, setError] = useState(null),
     [busy, setBusy] = useState(false);
   const [snapshot, setSnapshot] = useState(null),
-    [capturing, setCapturing] = useState(false);
+    [capturing, setCapturing] = useState(false),
+    [captureError, setCaptureError] = useState(null);
   const [source, setSource] = useState(""),
     [exporting, setExporting] = useState(false),
     [exported, setExported] = useState(null);
@@ -33,15 +36,17 @@ export default function SimulationPanel({ task, refresh, openArtifact }) {
   useEffect(() => {
     active.current = true;
     void readStatus();
+    const poll = setInterval(() => void readStatus(), 15000);
     return () => {
       active.current = false;
+      clearInterval(poll);
       controller.current?.abort();
       if (snapshotUrl.current) URL.revokeObjectURL(snapshotUrl.current);
     };
   }, []);
   const capture = async () => {
     setCapturing(true);
-    setError(null);
+    setCaptureError(null);
     try {
       const blob = await (
         await api("/simulation/snapshot", { raw: true })
@@ -54,13 +59,14 @@ export default function SimulationPanel({ task, refresh, openArtifact }) {
         at: new Date().toLocaleTimeString(),
       });
     } catch (e) {
-      if (active.current) setError(e);
+      if (active.current) setCaptureError(e);
     } finally {
       if (active.current) setCapturing(false);
     }
   };
   const sources = latestArtifacts(task.artifacts).filter(
-    (a) => a.metadata.kind === "cad_source" && a.metadata.validation_passed,
+    (a) =>
+      sourceKinds.includes(a.metadata.kind) && a.metadata.validation_passed,
   );
   const selected = sources.find((a) => a.id === source) || sources[0];
   const exportScene = async () => {
@@ -81,187 +87,242 @@ export default function SimulationPanel({ task, refresh, openArtifact }) {
   };
   const state = status?.state,
     result = state?.last_task?.result;
+  const forces = state?.jaw_net_contact_force_N;
+  const objects = Object.entries(state?.objects || {});
+  const connection = !status
+    ? { cls: "", label: "Connecting…" }
+    : status.connected
+      ? { cls: "available", label: `Connected · v${state.isaac_sim}` }
+      : status.configured
+        ? { cls: "failed", label: "Unavailable" }
+        : { cls: "", label: "Not configured" };
   return (
     <div className="simulation-panel">
-      <div className="section-heading">
+      <header className="simulation-header">
         <div>
-          <span className="eyebrow">NVIDIA · ISAAC SIM</span>
-          <h2>See the scene. Inspect the evidence.</h2>
+          <h2>Isaac Sim</h2>
+          <div className="simulation-meta">
+            <span className={`badge ${connection.cls}`}>
+              <span className="status-dot" />
+              {connection.label}
+            </span>
+            {status?.container && <span className="tag">{status.container}</span>}
+            {state?.stop_applied && (
+              <span className="badge failed">
+                <span className="status-dot" />
+                Stop applied
+              </span>
+            )}
+            {status?.observed_at && (
+              <small className="muted">
+                Observed {new Date(status.observed_at * 1000).toLocaleTimeString()}
+              </small>
+            )}
+          </div>
         </div>
-        <button className="secondary" disabled={busy} onClick={readStatus}>
-          <RefreshCw size={15} />
-          {busy ? "Connecting…" : "Refresh state"}
+        <button
+          className="icon-button"
+          aria-label="Refresh state"
+          title="Refresh state"
+          disabled={busy}
+          onClick={readStatus}
+        >
+          <RefreshCw size={15} className={busy ? "spin" : ""} />
         </button>
-      </div>
+      </header>
       {error && <ErrorNotice error={error} />}
       {!status && busy ? (
         <Loading>Reading your Brev simulation…</Loading>
+      ) : !state ? (
+        <p className="simulation-empty muted">
+          {status?.error ||
+            "Set the Isaac SSH host, container, Python path and MCP script to observe a scene."}
+        </p>
       ) : (
         <>
-          <div className="simulation-summary">
+          <dl className="simulation-metrics">
             <div>
-              <span
-                className={`status-dot ${status?.connected ? "completed" : "failed"}`}
-              />
-              <strong>
-                {status?.connected
-                  ? `Isaac Sim ${state.isaac_sim}`
-                  : status?.configured
-                    ? "Connection unavailable"
-                    : "Isaac not configured"}
-              </strong>
-              <span className="muted">
-                {status?.observed_at
-                  ? `Observed ${new Date(status.observed_at * 1000).toLocaleTimeString()}`
-                  : ""}
-              </span>
+              <dt>State</dt>
+              <dd>
+                {state.stopped
+                  ? "Stopped"
+                  : state.pick_place_phase
+                    ? state.pick_place_phase.replaceAll("_", " ")
+                    : state.active_motion
+                      ? "Moving"
+                      : "Idle"}
+              </dd>
             </div>
-            <p>{status?.error || status?.scope}</p>
-          </div>
-          {state && (
-            <>
-              <div className="simulation-metrics">
-                <div>
-                  <small>Scene state</small>
-                  <strong>
-                    {state.stopped
-                      ? "Stopped"
-                      : state.active_motion
-                        ? "Moving"
-                        : "Idle"}
-                  </strong>
-                </div>
-                <div>
-                  <small>Contact forces</small>
-                  <strong>
-                    {state.jaw_net_contact_force_N
-                      ?.map((n) => n.toFixed(2))
-                      .join(" / ") || "—"}{" "}
-                    N
-                  </strong>
-                </div>
-                <div>
-                  <small>Simulation time</small>
-                  <strong>{state.simulation_time_s?.toFixed(2)} s</strong>
-                </div>
-                <div>
-                  <small>CAD validation</small>
-                  <strong>Not linked</strong>
-                </div>
-              </div>
-              <div className="simulation-viewport">
-                {snapshot ? (
-                  <img
-                    src={snapshot.url}
-                    alt={`Isaac simulation viewport captured at ${snapshot.at}`}
-                  />
-                ) : (
-                  <div>
-                    <Activity size={36} />
-                    <p>Capture the current Isaac viewport</p>
-                    <small>A timestamped snapshot of the existing scene.</small>
-                  </div>
-                )}
-              </div>
-              <div className="button-row">
-                <button
-                  className="secondary"
-                  disabled={capturing}
-                  onClick={capture}
-                >
-                  <Camera size={15} />
-                  {capturing ? "Capturing…" : "Capture viewport"}
-                </button>
-                {snapshot && (
-                  <small className="muted">Captured {snapshot.at}</small>
-                )}
-              </div>
-              {result && (
-                <div
-                  className={`validation-panel ${result.simulation_pass ? "" : "warning"}`}
-                >
-                  <h3>
-                    Last scene test ·{" "}
-                    {result.simulation_pass
-                      ? "conditional simulation pass"
-                      : "did not pass"}
-                  </h3>
-                  <ul>
-                    {(result.errors || []).map((e) => (
-                      <li key={e}>{e.replaceAll("_", " ")}</li>
-                    ))}
-                    <li>
-                      Sustained valid hold:{" "}
-                      {result.maximum_valid_hold_s ?? "not reported"} s
-                    </li>
-                  </ul>
-                  <small>
-                    {result.scope}. This result is for the simulation scene, not
-                    the open CAD design.
-                  </small>
-                </div>
+            <div>
+              <dt>Peak jaw force</dt>
+              <dd>
+                {state.peak_jaw_force_N != null
+                  ? `${state.peak_jaw_force_N.toFixed(2)} N`
+                  : "—"}
+              </dd>
+              {!!forces?.length && (
+                <small className="muted">
+                  {forces.map((n) => n.toFixed(2)).join(" / ")} N now
+                </small>
               )}
-            </>
+            </div>
+            <div>
+              <dt>Sim time</dt>
+              <dd>
+                {state.simulation_time_s != null
+                  ? `${state.simulation_time_s.toFixed(2)} s`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt>Grasp</dt>
+              <dd>{state.grasp_qualified ? "Qualified" : "Not yet"}</dd>
+            </div>
+          </dl>
+          {!!objects.length && (
+            <div className="simulation-objects">
+              <h3>Scene objects</h3>
+              <ul>
+                {objects.map(([name, obj]) => {
+                  const [x, y, z] = obj.pose_xyzw || [];
+                  const moving = (obj.velocity || []).some(
+                    (v) => Math.abs(v) > 1e-3,
+                  );
+                  return (
+                    <li key={name}>
+                      <span className="object-name">
+                        {name.replaceAll("_", " ")}
+                      </span>
+                      <span className="object-pose muted">
+                        {[x, y, z].every((n) => n != null)
+                          ? `${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)} m`
+                          : "—"}
+                      </span>
+                      {moving && <span className="object-moving">moving</span>}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
+          <div className={`simulation-viewport ${snapshot ? "has-image" : ""}`}>
+            {snapshot ? (
+              <img
+                src={snapshot.url}
+                alt={`Isaac simulation viewport captured at ${snapshot.at}`}
+              />
+            ) : (
+              <div className="viewport-empty">
+                <Camera size={22} />
+                {captureError ? (
+                  <>
+                    <strong>Isaac didn't return a frame</strong>
+                    <small>
+                      {/did not complete/i.test(captureError.message)
+                        ? "The Isaac viewport isn't rendering. Restart the Isaac control session on Brev, then try again."
+                        : captureError.message}
+                    </small>
+                  </>
+                ) : (
+                  <small>See what the scene looks like right now.</small>
+                )}
+              </div>
+            )}
+            <button
+              className={
+                snapshot ? "secondary viewport-recapture" : "secondary"
+              }
+              disabled={capturing}
+              onClick={capture}
+            >
+              <Camera size={15} />
+              {capturing
+                ? "Capturing…"
+                : snapshot
+                  ? `${snapshot.at} · Recapture`
+                  : captureError
+                    ? "Try again"
+                    : "Capture viewport"}
+            </button>
+          </div>
+          {result && (
+            <div
+              className={`simulation-result ${result.simulation_pass ? "pass" : "fail"}`}
+            >
+              <strong>
+                Last scene test ·{" "}
+                {result.simulation_pass ? "conditional pass" : "did not pass"}
+              </strong>
+              <ul>
+                {(result.errors || []).map((e) => (
+                  <li key={e}>{e.replaceAll("_", " ")}</li>
+                ))}
+                <li>
+                  Valid hold: {result.maximum_valid_hold_s ?? "not reported"} s
+                </li>
+              </ul>
+            </div>
+          )}
+          <p className="simulation-scope">
+            Observed scene only · not linked to this design
+          </p>
         </>
       )}
-      <div className="simulation-export">
-        <h3>Prepare this design for Isaac</h3>
-        <p>
-          Export the validated assembly as USD in metres, with collision meshes
-          and a manifest tied to the exact CAD revision.
-        </p>
-        {sources.length ? (
-          <>
-            <select
-              aria-label="CAD source for Isaac export"
-              value={selected.id}
-              onChange={(e) => {
-                setSource(e.target.value);
-                setExported(null);
-              }}
-            >
-              {sources.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} · v{s.version}
-                </option>
-              ))}
-            </select>
+      <section className="simulation-export">
+        <div>
+          <h3>Export to Isaac</h3>
+          <p className="muted">
+            Static USD collision scene in metres, tied to the CAD revision.
+          </p>
+        </div>
+        {selected ? (
+          <div className="simulation-export-row">
+            {sources.length > 1 && (
+              <select
+                aria-label="CAD source for Isaac export"
+                value={selected.id}
+                onChange={(e) => {
+                  setSource(e.target.value);
+                  setExported(null);
+                }}
+              >
+                {sources.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} · v{s.version}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               className="primary"
               disabled={exporting}
               onClick={exportScene}
             >
-              {exporting ? "Preparing scene…" : "Export Isaac scene"}
+              {exporting ? "Exporting…" : "Export scene"}
             </button>
-          </>
+          </div>
         ) : (
-          <p className="muted">
-            Generate and validate a CAD model to enable export.
-          </p>
+          <p className="muted">Needs a validated CAD model.</p>
         )}
-        <small>
-          The export starts as a static collision scene. Define joints, drives,
-          mass and measured contact properties in Isaac before grasp testing. It
-          does not change the connected scene.
-        </small>
         {exported && (
           <div className="button-row">
             <button
               className="secondary"
               onClick={() => openArtifact(task.id, exported.scene.id)}
             >
+              <FileBox size={15} />
               USD scene
             </button>
             <button
               className="secondary"
               onClick={() => openArtifact(task.id, exported.manifest.id)}
             >
+              <FileJson size={15} />
               Test manifest
             </button>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

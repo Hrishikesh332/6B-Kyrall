@@ -13,7 +13,7 @@ import shutil
 import time
 from typing import Literal
 from pydantic import Field
-from .config import PROVIDERS
+from .config import MODEL_PROVIDERS, PROVIDERS
 from .models import StrictModel
 from .provider import ProviderError
 
@@ -28,6 +28,10 @@ class ConnectionInput(StrictModel):
     model: str = Field(default='', max_length=120, pattern=r'^[A-Za-z0-9._:\-\[\]/]*$')
     # Optional Anthropic Console key for Claude Code when no subscription login is used.
     anthropic_api_key: str = Field(default='', max_length=300)
+
+
+class ModelChoice(StrictModel):
+    model: str = Field(default='', max_length=120, pattern=r'^[A-Za-z0-9._:\-\[\]/]*$')
 
 
 class ConnectionCheck(StrictModel):
@@ -58,6 +62,7 @@ class Connections:
     def __init__(self, settings):
         self.settings, self.store = settings, ConnectionStore(settings.data_dir)
         # Values from backend/.env stay the fallback for anything not chosen in the app.
+        self.listed = {}
         self.defaults = {'provider':settings.provider, 'model':settings.model,
                          'claude_model':settings.claude_model, 'anthropic_api_key':settings.anthropic_api_key}
         # Hosted 6B never uses a connection saved on the server: each browser brings its own.
@@ -72,6 +77,31 @@ class Connections:
         s.claude_model = models.get('claude') or d['claude_model']
         s.anthropic_api_key = d['anthropic_api_key'] or saved.get('anthropic_api_key', '')
 
+    def claude_models(self):
+        """Claude Code's own list for this account, kept 10 minutes; the CLI aliases when it cannot answer."""
+        s = self.settings
+        # Hosted lists carry no key (GET requests never send it), so they could not reflect the account.
+        if s.hosted: return CLAUDE_MODELS
+        hit = self.listed.get(bool(s.anthropic_api_key))
+        if hit and time.time()-hit[0] < 600: return hit[1]
+        from .claude_code import available_models
+        try: models = asyncio.run(available_models(s))
+        except Exception: return CLAUDE_MODELS
+        if not models: return CLAUDE_MODELS
+        self.listed[bool(s.anthropic_api_key)] = (time.time(), models)
+        return models
+
+    def choose(self, model):
+        """Switch the active connection's model; the sign-in is unchanged, so no live check is needed."""
+        s = self.settings
+        if s.provider not in MODEL_PROVIDERS: raise ValueError('The local workshop has no model to choose')
+        if s.provider=='openai' and not model: raise ValueError('Choose an OpenAI model')
+        saved = self.store.load()
+        saved.update(provider=s.provider, models={**saved.get('models',{}), s.provider:model}, changed_at=time.time())
+        self.store.save(saved)
+        self.apply(saved)
+        return self.overview()
+
     def source(self):
         if self.settings.hosted: return 'browser'
         return 'workspace' if self.store.load().get('provider') in PROVIDERS else 'environment'
@@ -80,7 +110,8 @@ class Connections:
         s = self.settings
         saved = {} if s.hosted else self.store.load()
         return {'hosted':s.hosted,
-                'active':{'provider':s.provider, 'name':NAMES[s.provider], 'source':self.source(),
+                'active':{'provider':s.provider, 'name':'ChatGPT plan' if s.openai_plan else NAMES[s.provider], 'plan':s.openai_plan,
+                          'source':self.source(),
                           'model':s.claude_model if s.provider=='claude' else s.model, 'changed_at':saved.get('changed_at')},
                 'providers':[self.describe(p) for p in ('claude','workshop','openai')]}
 
@@ -143,11 +174,13 @@ class Connections:
         if data.anthropic_api_key: saved['anthropic_api_key'] = data.anthropic_api_key
         self.store.save(saved)
         self.apply(saved)
+        self.listed.clear()
         return {**self.overview(), 'check':result}
 
     def forget_claude_key(self):
         saved = self.store.load()
         saved.pop('anthropic_api_key', None)
         self.store.save(saved)
+        self.listed.clear()
         self.apply(saved)
         return self.overview()

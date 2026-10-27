@@ -28,6 +28,8 @@ class BambuSettings(StrictModel):
     machine: str = Field(min_length=1, max_length=120)
     process: str = Field(min_length=1, max_length=120)
     filament: str = Field(min_length=1, max_length=120)
+    # Saving profiles connects Bambu Studio; until then 6B and its agent never slice with it.
+    enabled: bool = True
 
 
 def binary():
@@ -97,9 +99,18 @@ class Store:
 
     def load(self):
         try:
-            return {**DEFAULTS, **json.loads(self.path.read_text())}
+            return {**DEFAULTS, 'enabled': False, **json.loads(self.path.read_text())}
         except (OSError, ValueError):
-            return dict(DEFAULTS)
+            return {**DEFAULTS, 'enabled': False}
+
+    def connected(self):
+        """Installed and switched on by the user; off by default."""
+        return bool(binary()) and bool(self.load().get('enabled'))
+
+    def disconnect(self):
+        if self.path.exists():
+            self.path.write_text(json.dumps({**self.load(), 'enabled': False}, indent=2))
+        return self.load()
 
     def save(self, settings):
         options = catalog(settings.machine)
@@ -121,8 +132,9 @@ def status(store):
     if area:
         xs, ys = zip(*(tuple(float(v) for v in p.split('x')) for p in area))
         bed = [max(xs) - min(xs), max(ys) - min(ys), float(height) if height else None]
-    return {'installed': bool(exe), 'version': version() if exe else None, 'path': str(APP) if exe else None,
-            'settings': settings, 'bed_mm': bed}
+    return {'installed': bool(exe), 'connected': bool(exe) and bool(settings.get('enabled')),
+            'version': version() if exe else None, 'path': str(APP) if exe else None,
+            'settings': {k: settings[k] for k in DEFAULTS}, 'bed_mm': bed}
 
 
 def _gcode_stats(path):
@@ -217,6 +229,8 @@ REFERENCE = re.compile(r'(^|_)(ref|reference)$')
 
 def slice_build(db, store, settings_store, tid, rid, build_id=None, work_root=None, parts=None):
     """Slice a build's printed STLs (latest build by default) and save the summary and 3MF project."""
+    if not settings_store.connected():
+        raise ValueError('Bambu Studio is not connected. Connect it in Integrations to slice with it.')
     row = db.one("SELECT metadata FROM artifacts WHERE task_id=? AND json_extract(metadata,'$.kind')='validation' "
                  + ("AND json_extract(metadata,'$.build_id')=? " if build_id else '') + 'ORDER BY created_at DESC LIMIT 1',
                  (tid, build_id) if build_id else (tid,))

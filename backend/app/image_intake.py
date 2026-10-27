@@ -9,6 +9,9 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import Field, model_validator
 from .models import StrictModel
 
+# What a chat-attached photo shows: the object to model or grip, or gripper hardware to reuse or match.
+PHOTO_ROLES = ('object', 'gripper')
+
 
 class ObjectView(StrictModel):
     artifact_id: str
@@ -91,3 +94,11 @@ def latest_image_set(db, store, tid):
             _, path = store.get(tid, row['id'])
             return row, json.loads(path.read_text())
     return None, None
+
+
+def photo_attachments(db, tid, limit=12):
+    """Latest decoded chat photos with the role the user tagged them with."""
+    rows = db.all("SELECT id,name,metadata FROM artifacts WHERE task_id=? ORDER BY created_at DESC", (tid,))
+    photos = [{'artifact_id': r['id'], 'name': r['name'], 'role': r['metadata'].get('photo_role', 'object')}
+              for r in rows if r['metadata'].get('kind') == 'reference_image']
+    return photos[:limit]

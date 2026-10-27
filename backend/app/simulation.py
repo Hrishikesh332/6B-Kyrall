@@ -78,6 +78,7 @@ def observation(settings):
     if not isinstance(data,dict) or data.get('scope') != 'simulation' or data.get('hardware_connected') is not False:
         raise ValueError('The connector did not identify a simulation-only environment')
     return {'configured': True, 'connected': True, 'observed_at': time.time(), 'state': data,
+            'container': settings.isaac_container,
             'design_validation': 'unlinked',
             'scope': 'Existing Isaac scene only. This observation does not validate the open CAD design.'}
 

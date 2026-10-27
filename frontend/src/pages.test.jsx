@@ -68,9 +68,9 @@ describe("workspace collections", () => {
       screen.getByRole("button", { name: "Preview assembly_notes.md" }),
     ).toBeInTheDocument();
   });
-  it("finds a project by its brief and keeps new tasks scoped to that project", async () => {
+  it("finds a project by its brief and opens its chats", async () => {
     const user = userEvent.setup(),
-      newTask = vi.fn(),
+      openProject = vi.fn(),
       setModal = vi.fn();
     const projects = [
       {
@@ -78,13 +78,15 @@ describe("workspace collections", () => {
         name: "Workshop",
         brief: "Mounting fixtures",
         memory_scope: "project",
+        chat_count: 3,
+        memory_count: 1,
       },
       { id: "p2", name: "Kitchen", brief: "Storage", memory_scope: "project" },
     ];
     render(
       <ProjectsPage
         projects={projects}
-        newTask={newTask}
+        openProject={openProject}
         setModal={setModal}
         notify={vi.fn()}
       />,
@@ -96,10 +98,13 @@ describe("workspace collections", () => {
     expect(
       screen.queryByRole("heading", { name: "Kitchen" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/3 chats · 1 memory · project-only/),
+    ).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Start project", exact: true }),
+      screen.getByRole("button", { name: "Open project", exact: true }),
     );
-    expect(newTask).toHaveBeenCalledWith("p1");
+    expect(openProject).toHaveBeenCalledWith("p1");
     await user.clear(screen.getByRole("textbox", { name: "Search projects" }));
     await user.type(
       screen.getByRole("textbox", { name: "Search projects" }),
@@ -111,7 +116,7 @@ describe("workspace collections", () => {
     await user.clear(screen.getByRole("textbox", { name: "Search projects" }));
     await waitFor(() =>
       expect(
-        screen.getAllByRole("button", { name: "Start project", exact: true }),
+        screen.getAllByRole("button", { name: "Open project", exact: true }),
       ).toHaveLength(2),
     );
   });

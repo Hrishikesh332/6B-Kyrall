@@ -16,23 +16,37 @@ def closure_requested(db,tid):
     return any(phrase in text for phrase in ('close and release','moving jaws','opening and closing','closing gripper'))
 
 
+def attempt_runs(db, tid, rid):
+    """This run plus the failed, interrupted or cancelled runs it retries since the task last completed.
+
+    A retry resumes the same piece of work, so builds, checks and reviews made before a
+    provider failure still count toward delivering it.
+    """
+    last=db.one("SELECT created_at FROM runs WHERE task_id=? AND status='completed' ORDER BY created_at DESC LIMIT 1",(tid,))
+    rows=db.all("SELECT id FROM runs WHERE task_id=? AND created_at>? AND (id=? OR status IN ('failed','interrupted','cancelled'))",
+                (tid,last['created_at'] if last else 0,rid))
+    return [r['id'] for r in rows] or [rid]
+
+
 def completion_errors(engine, run, unresolved):
     errors = ['Unresolved tool error: '+name for name in unresolved]
     db,tid,rid=engine.db,run['task_id'],run['id']
     task=db.require_task(tid)
-    calls=db.all('SELECT name,arguments,result,status FROM tool_calls WHERE run_id=? ORDER BY started_at',(rid,))
-    artifacts=db.all('SELECT id,name,metadata FROM artifacts WHERE task_id=? AND run_id=? ORDER BY created_at',(tid,rid))
+    runs=attempt_runs(db,tid,rid)
+    among=f"run_id IN ({','.join('?'*len(runs))})"
+    calls=db.all(f'SELECT name,arguments,result,status FROM tool_calls WHERE {among} ORDER BY started_at',tuple(runs))
+    artifacts=db.all(f'SELECT id,name,metadata FROM artifacts WHERE task_id=? AND {among} ORDER BY created_at',(tid,*runs))
     latest={a['name']:a for a in artifacts}
     cad_calls=[c for c in calls if c['name'] in ('build_cad','revise_cad','build_cad_script','revise_cad_script')]
     requested=' '.join(str(x) for x in task['spec'].get('deliverables',[])).lower()
     if any(x in requested for x in ('stl','step','cad','3d model')) and not cad_calls:
         errors.append('The requested CAD deliverables have not been built in this run')
     if cad_calls:
-        report=db.one("SELECT id,metadata FROM artifacts WHERE task_id=? AND run_id=? AND name='validation.json' ORDER BY created_at DESC LIMIT 1",(tid,rid))
+        report=db.one(f"SELECT id,metadata FROM artifacts WHERE task_id=? AND {among} AND name='validation.json' ORDER BY created_at DESC LIMIT 1",(tid,*runs))
         if not report or not report['metadata'].get('validation_passed'):
             errors.append('The latest CAD build must pass numeric validation')
         elif not any(c['name']=='inspect_validation' and c['status']=='completed' and c['arguments'].get('artifact_id')==report['id'] for c in calls):
-            errors.append('Inspect the latest validation.json using inspect_validation')
+            errors.append(f"Inspect the latest validation.json using inspect_validation (artifact_id {report['id']})")
         current_build=report['metadata'].get('build_id') if report else None
         for suffixes in (('.stl',),('.step',),('.cad.json','.cad.py')):
             if not any(a['name'].endswith(suffixes) and a['metadata'].get('build_id')==current_build for a in latest.values()):
@@ -67,18 +81,20 @@ def completion_errors(engine, run, unresolved):
                 required=[a for a in current.values() if a['metadata'].get('kind') in ('validation','cad_source','cad_script','motion_validation','motion_source','design_review','decision','reconstruction_evidence','simulation_scene','simulation_manifest') or a['name'].endswith(('.step','.stl'))]
                 decisions={a['name']:a for a in artifacts if a['metadata'].get('kind')=='decision'}
                 required.extend(a for a in decisions.values() if a['metadata'].get('build_id') is None)
-                if not {a['id'] for a in required}.issubset(included):
-                    errors.append('Package every current STL, STEP, construction source, decision summary and validation report from the same latest build')
+                if (missing:=[a for a in required if a['id'] not in included]):
+                    # Name what is missing so one repair pass can fix it.
+                    errors.append('Package every current STL, STEP, construction source, decision summary and validation report '
+                                  'from the same latest build; missing: '+', '.join(f"{a['name']} ({a['id']})" for a in missing[:12]))
                 notes={a['name']:a for a in artifacts if a['name'].endswith('.md')}
                 if not any(a['id'] in included for a in notes.values()):
                     errors.append('Include the latest assembly/manufacturing notes in the final ZIP')
                 cited={aid for a in required if a['metadata'].get('kind')=='decision' for aid in a['metadata']['decision']['evidence_ids']}
-                if not cited.issubset(included):
-                    errors.append('Include the evidence cited by the current decision summaries in the final ZIP')
+                if (uncited:=sorted(cited-included)):
+                    errors.append('Include the evidence cited by the current decision summaries in the final ZIP; missing artifact ids: '+', '.join(uncited[:12]))
     from .rules import undecided, unchecked_must_rules
     if cad_calls and (pending := undecided(db,tid)):
         errors.append('Decide whether these rule sets apply with choose_rules: '+', '.join(pending))
-    if cad_calls and (unchecked := unchecked_must_rules(db,tid,rid)):
+    if cad_calls and (unchecked := unchecked_must_rules(db,tid,runs)):
         errors.append('Record rule checks (record_rule_checks) against the latest build for: '+'; '.join(t[:80] for t in unchecked[:6]))
     if task['plan'] and any(step['status']!='completed' for step in task['plan']):
         errors.append('Finish the visible checklist or report why the task cannot complete')

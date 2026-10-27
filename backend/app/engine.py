@@ -12,10 +12,25 @@ from .credentials import NO_KEY, KeyVault
 from .db import encode, uid
 from .provider import ResponsesProvider
 from .recipes import marker_rack, plate
-from .tools import Cancelled, review_image, tool_definitions
+from .awake import KeepAwake
+from .tools import Cancelled, review_image, tool_definitions, unresolved_error
 from .completion import check_completion
 
 log = logging.getLogger(__name__)
+
+
+def replayable(outputs):
+    """Model output items to resend as history when nothing is stored server-side (store: false).
+
+    Reasoning items cannot be resolved without storage, and output item ids refer to nothing.
+    """
+    keep=[]
+    for item in outputs:
+        if item.get('type') not in ('message','function_call'): continue
+        item={k:v for k,v in item.items() if k not in ('id','status')}
+        if item['type']=='message': item.setdefault('role','assistant')
+        keep.append(item)
+    return keep
 
 
 class Engine:
@@ -26,6 +41,8 @@ class Engine:
         self.active_runs=set()
         # Hosted: each task's browser connection, held in memory while it has work.
         self.keys=KeyVault()
+        # The chat's Firestore copy (firebase.CloudSync), pushed as each run starts and stops.
+        self.cloud=None
 
     async def serve(self):
         while not self.shutdown.is_set():
@@ -65,6 +82,8 @@ class Engine:
     async def run_task(self,run):
         tid,rid=run['task_id'],run['id']
         heartbeat=asyncio.create_task(self.heartbeat(rid))
+        awake=KeepAwake().start()
+        if self.cloud: self.cloud.push(tid,'started')
         try:
             self.runner.check_cancel(rid)
             if self.settings.provider=='workshop':
@@ -85,10 +104,12 @@ class Engine:
             self.db.emit(tid,rid,'activity',{'title':'Run needs attention','detail':error})
             self.db.finish(rid,'failed',error)
         finally:
+            awake.stop()
             heartbeat.cancel()
             await asyncio.gather(heartbeat,return_exceptions=True)
             from .sessions import save
             save(self.db,self.settings.data_dir,tid)
+            if self.cloud: self.cloud.push(tid,'finished')
 
     async def call(self,run,name,args):
         result=await self.runner.execute(run['task_id'],run['id'],uid(),name,args)
@@ -221,6 +242,8 @@ class Engine:
         if task['project_id']:
             project=self.db.one('SELECT * FROM projects WHERE id=?',(task['project_id'],))
             context['project_brief']=project['brief']
+            memory=self.db.project_memory(task)
+            if memory: context['project_memory']=memory
             context['reference_excerpts']=[]
             project_files=self.db.all('SELECT * FROM project_files WHERE project_id=? ORDER BY created_at DESC LIMIT 8',(task['project_id'],))
             for file in project_files:
@@ -230,6 +253,9 @@ class Engine:
         checkpoint=run['checkpoint']
         previous=checkpoint.get('previous_response_id')
         items=checkpoint.get('pending_input')
+        # A ChatGPT plan keeps no server-side conversation: resend the history every turn.
+        stateless=self.settings.openai_plan
+        history=checkpoint.get('history',[]) if stateless else None
         if items is None:
             messages=self.db.all("SELECT role,kind,content FROM messages WHERE task_id=? AND run_id IS NOT NULL ORDER BY created_at",(tid,))
             # Exact most-recent text is kept. Older messages are bounded; spec persists separately.
@@ -251,7 +277,8 @@ class Engine:
             self.runner.check_cancel(rid)
             if total>=self.settings.max_run_tokens:
                 raise ValueError('Run token budget reached; narrow the request or raise the configured budget')
-            pending=asyncio.create_task(self.provider.respond(instructions,tool_definitions(self.settings),items,previous))
+            sent=[*history,*items] if stateless else items
+            pending=asyncio.create_task(self.provider.respond(instructions,tool_definitions(self.settings),sent,None if stateless else previous))
             try:
                 while not pending.done():
                     self.runner.check_cancel(rid)
@@ -270,10 +297,11 @@ class Engine:
                 self.db.event(c,tid,rid,'usage.updated',{'total_tokens':total,'model_turns':turns})
             from .sessions import SessionLog
             log=SessionLog(self.settings.data_dir,tid,rid)
-            log.write('sent',{'items':items,'previous_response_id':previous})
+            log.write('sent',{'items':items,'previous_response_id':None if stateless else previous})
             log.write('received',response)
             previous=response['id']
             outputs=response.get('output',[])
+            if stateless: history=[*sent,*replayable(outputs)]
             calls=[x for x in outputs if x.get('type')=='function_call']
             texts=[p.get('text','') for x in outputs if x.get('type')=='message' for p in x.get('content',[]) if p.get('type')=='output_text']
             # Text accompanying tools is progress, not a validated final answer.
@@ -290,10 +318,8 @@ class Engine:
                     if count>self.settings.max_tool_calls:
                         raise ValueError('Model tool-call budget reached')
                     result=await self.runner.execute(tid,rid,call['call_id'],call['name'],call.get('arguments'),arguments_json=True)
-                    if isinstance(result,dict) and result.get('error') and result.get('code')!='tool_unavailable':
-                        unresolved[call['name']]=result['error']
-                    else:
-                        unresolved.pop(call['name'],None)
+                    if (error:=unresolved_error(result)): unresolved[call['name']]=error
+                    else: unresolved.pop(call['name'],None)
                     if call['name'] in ('ask_questions','request_approval') and isinstance(result,dict) and (result.get('questionnaire_id') or result.get('approval_id')):
                         pause_id=(call['name'],result.get('questionnaire_id') or result['approval_id'])
                 items.append({'type':'function_call_output','call_id':call['call_id'],'output':encode(result)})
@@ -305,6 +331,7 @@ class Engine:
                     self.db.emit(tid,rid,'image.inspected',{'artifact_id':image,'automatic':True})
             items.extend(images)
             checkpoint={'previous_response_id':previous,'pending_input':items,'turns':turns,'total_tokens':total,'unresolved_errors':unresolved,'tool_calls':count,'completion_repairs':repairs}
+            if stateless: checkpoint['history']=history
             if pause_id: checkpoint['questionnaire_id' if pause_id[0]=='ask_questions' else 'approval_id']=pause_id[1]
             self.db.checkpoint(rid,checkpoint)
             if pause_id:

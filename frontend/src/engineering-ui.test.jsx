@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MeshPreview } from "./ArtifactPreview.jsx";
-import ObjectCapture from "./ObjectCapture.jsx";
 import SimulationPanel from "./SimulationPanel.jsx";
 const viewer = vi.hoisted(() => ({
   update: vi.fn(),
@@ -44,7 +43,7 @@ describe("engineering controls", () => {
       "jaw",
     );
     expect(viewer.update).toHaveBeenLastCalledWith(
-      expect.objectContaining({ hidden: ["base"] }),
+      expect.objectContaining({ ghosted: ["base"], selected: "jaw" }),
     );
     await user.click(screen.getByText("Reset view"));
     await user.selectOptions(screen.getByLabelText("Presentation mode"), "m1");
@@ -67,70 +66,6 @@ describe("engineering controls", () => {
     expect(
       screen.getByText(/contact, forces and grasp success/),
     ).toBeInTheDocument();
-  });
-  it("requires scale before queueing an image design and preserves a queued request for retries", async () => {
-    const user = userEvent.setup();
-    vi.stubGlobal("URL", {
-      ...URL,
-      createObjectURL: () => "blob:test",
-      revokeObjectURL: vi.fn(),
-    });
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (url) => {
-        if (url.endsWith("/image-sets"))
-          return new Response(JSON.stringify({ id: "capture1" }), {
-            status: 201,
-          });
-        if (url.endsWith("/messages"))
-          return new Response("{}", { status: 202 });
-        return new Response("image");
-      });
-    const photo = {
-      id: "p1",
-      name: "front.png",
-      version: 1,
-      metadata: { kind: "reference_image" },
-    };
-    render(
-      <ObjectCapture
-        task={{ id: "t1", status: "completed", artifacts: [photo] }}
-        cap={{ provider: "claude" }}
-        refresh={vi.fn()}
-        notify={vi.fn()}
-      />,
-    );
-    await user.selectOptions(
-      screen.getByLabelText("Use an attached photo"),
-      "p1",
-    );
-    await user.type(screen.getByLabelText("Object name"), "Housing");
-    await user.type(
-      screen.getByLabelText("What was measured?"),
-      "Outside width",
-    );
-    await user.click(screen.getByText("Generate object CAD"));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "at least one measured dimension",
-    );
-    expect(
-      fetchMock.mock.calls.some(([url]) => url.endsWith("/messages")),
-    ).toBe(false);
-    await user.type(screen.getByLabelText("Width X (mm)"), "40");
-    await user.click(screen.getByText("Generate object CAD"));
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.some(([url]) => url.endsWith("/messages")),
-      ).toBe(true),
-    );
-    const request = fetchMock.mock.calls.find(([url]) =>
-      url.endsWith("/image-sets"),
-    );
-    expect(JSON.parse(request[1].body)).toMatchObject({
-      width_mm: 40,
-      depth_mm: null,
-      views: [{ artifact_id: "p1", angle: "front" }],
-    });
   });
   it("shows failed Isaac evidence without applying it to the open design", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -166,7 +101,77 @@ describe("engineering controls", () => {
     expect(
       await screen.findByText("Last scene test · did not pass"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Not linked")).toBeInTheDocument();
+    expect(screen.getByText(/not linked to this design/)).toBeInTheDocument();
     expect(screen.getByText("slip hold failed")).toBeInTheDocument();
+  });
+  it("explains a viewport capture Isaac could not render", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
+      url.endsWith("/snapshot")
+        ? new Response(
+            JSON.stringify({
+              detail: "Isaac: Viewport capture did not complete",
+            }),
+            { status: 503 },
+          )
+        : new Response(
+            JSON.stringify({
+              configured: true,
+              connected: true,
+              state: { isaac_sim: "6.2.0", stopped: true },
+            }),
+          ),
+    );
+    render(
+      <SimulationPanel
+        task={{ id: "t1", artifacts: [] }}
+        refresh={vi.fn()}
+        openArtifact={vi.fn()}
+      />,
+    );
+    await user.click(await screen.findByText("Capture viewport"));
+    expect(
+      await screen.findByText("Isaac didn't return a frame"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Try again")).toBeInTheDocument();
+  });
+  it("offers Isaac export for a validated CAD script", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (url) =>
+        url.endsWith("/simulation-export")
+          ? new Response(
+              JSON.stringify({ scene: { id: "s1" }, manifest: { id: "m1" } }),
+              { status: 201 },
+            )
+          : new Response(JSON.stringify({ configured: false })),
+      );
+    const openArtifact = vi.fn();
+    render(
+      <SimulationPanel
+        task={{
+          id: "t1",
+          artifacts: [
+            {
+              id: "c1",
+              name: "gripper.cad.py",
+              version: 2,
+              created_at: 2,
+              metadata: { kind: "cad_script", validation_passed: true },
+            },
+          ],
+        }}
+        refresh={vi.fn()}
+        openArtifact={openArtifact}
+      />,
+    );
+    await user.click(await screen.findByText("Export scene"));
+    await user.click(await screen.findByText("USD scene"));
+    expect(openArtifact).toHaveBeenCalledWith("t1", "s1");
+    const request = fetchMock.mock.calls.find(([url]) =>
+      url.endsWith("/simulation-export"),
+    );
+    expect(JSON.parse(request[1].body)).toEqual({ source_artifact_id: "c1" });
   });
 });

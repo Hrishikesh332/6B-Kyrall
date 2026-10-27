@@ -16,6 +16,8 @@ import {
   X,
 } from "lucide-react";
 import { date, modeLabel, size, statusLabel } from "./lib.js";
+import ModelPicker from "./ModelPicker.jsx";
+import ProviderLogo from "./ProviderLogo.jsx";
 
 export function Animated({ children, className = "", ...props }) {
   const [parent] = useAutoAnimate();
@@ -188,6 +190,11 @@ export function Composer({
   draft,
   onDraftUsed,
   contextScope,
+  attachments = null,
+  hasAttachments = false,
+  onModelChange,
+  submitLabel = "Start chat",
+  placeholder,
 }) {
   const [text, setText] = useState("");
   const [scope, setScope] = useState(projectId ? "project" : "isolated");
@@ -209,7 +216,7 @@ export function Composer({
   }, [projectId]);
   const submit = async (e) => {
     e.preventDefault();
-    if (locked.current || disabled || !text.trim()) return;
+    if (locked.current || disabled || (!text.trim() && !hasAttachments)) return;
     if (scope === "project" && !project) {
       setError(new Error("Choose a project to use project context."));
       return;
@@ -237,13 +244,15 @@ export function Composer({
         className={`composer ${initial ? "initial" : ""}`}
         onSubmit={submit}
       >
+        {attachments}
         <textarea
           ref={ref}
           aria-label={initial ? "Describe your project" : "Message 6B"}
           placeholder={
-            initial
+            placeholder ||
+            (initial
               ? "Describe what you want to make…"
-              : "Ask a follow-up or describe a change…"
+              : "Ask a follow-up or describe a change…")
           }
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -281,20 +290,28 @@ export function Composer({
           ) : (
             <small className="muted">{contextScope} context</small>
           )}
-          <span className="composer-model">
-            <span className="status-dot" />
-            {modeLabel(cap)}
-          </span>
+          {initial ? (
+            <ModelPicker cap={cap} onChange={onModelChange} />
+          ) : (
+            <span className="composer-model">
+              {cap?.provider === "claude" || cap?.provider === "openai" ? (
+                <ProviderLogo provider={cap.provider} size={13} />
+              ) : (
+                <span className="status-dot" />
+              )}
+              {modeLabel(cap)}
+            </span>
+          )}
           <button
             className="send"
             type="submit"
-            disabled={busy || disabled || !text.trim()}
+            disabled={busy || disabled || (!text.trim() && !hasAttachments)}
             aria-label="Send message"
           >
             {initial ? (
               <>
                 <Plus size={16} />
-                Create project
+                {submitLabel}
               </>
             ) : (
               <ArrowUp size={20} />
