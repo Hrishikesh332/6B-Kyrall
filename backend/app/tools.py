@@ -21,6 +21,8 @@ from .models import StrictModel as _Strict
 
 class SliceInput(_Strict):
     build_id: str | None = None
+    # Part names to put on the plate; by default every printed part (reference parts like *_ref are left out).
+    parts: list[str] | None = None
 from .simulation_export import SimulationExportInput, export_scene
 from .engineering_schema import MotionInput, DesignReviewInput
 from .db import encode, uid, row_dict
@@ -52,7 +54,7 @@ TOOL_SPECS = {
     'revise_cad': (CadPatchInput, 'Repair or revise a generated CAD source using only changed nodes and parts. IDs replace matching objects; new IDs append. Omitted geometry remains unchanged. Dependencies are sorted and validated. Prefer this over resending a whole graph.'),
     'build_cad_script': (CadScriptInput, 'Preferred CAD tool. Write the design as a CadQuery script and get STL parts, STEP, validation, 3D preview and live parameter sliders. Use any CadQuery feature: sketches, extrude, revolve, loft, sweep, shell, fillet, chamfer, holes (cboreHole/cskHole), patterns, text, splines. Contract: '+SCRIPT_CONTRACT+' The result attaches rendered views: look at them, then fix mistakes with revise_cad_script. Errors report the script line.'),
     'revise_cad_script': (CadScriptRevision, 'Revise a generated .cad.py with exact find/replace edits (each find must match once) and rebuild. Read the current script with read_artifact first so find text matches exactly. Keep part names stable so versions line up. Prefer small edits over rewriting the script.'),
-    'slice_with_bambu': (SliceInput, 'Slice the latest (or a given) CAD build in the locally installed Bambu Studio with the user\'s printer, process and filament profiles. Returns print time, filament grams, layers and Bambu Studio\'s own warnings (for example floating cantilevers needing support) and saves a 3MF project. Use it to confirm printability before delivering parts for printing; fix or explain every warning.'),
+    'slice_with_bambu': (SliceInput, 'Slice the latest (or a given) CAD build in the locally installed Bambu Studio with the user\'s printer, process and filament profiles. Returns print time, filament grams, layers and Bambu Studio\'s own warnings (for example floating cantilevers needing support) and saves a 3MF project. Use it to confirm printability before delivering parts for printing; fix or explain every warning. Reference parts named *_ref or *_reference are left off the plate; pass parts to slice a subset, for example one plate at a time when everything does not fit.'),
     'choose_rules': (ChooseRulesInput, 'Decide, with a reason, whether each undecided conditional rule set applies to this task (see context.rules.undecided). Returns the full rules of the sets you applied; they become binding. If you cannot tell whether a set applies, ask the user with ask_questions instead of guessing.'),
     'record_rule_checks': (RuleChecksInput, 'After the final build, record for each binding rule (by rule id) whether the design meets it: met, not_met, unverified or not_applicable, with honest evidence and artifact ids. "met" needs evidence from checks, validation, motion or reviewed views; otherwise use unverified.'),
     'request_approval': (m.ApprovalInput, 'Before changing an existing design, pause and show the user a plan: what will change (target + change), what stays fixed (interfaces, clearances, other parts), risks and the checks you will run. Put up to 3 open choices that would change the plan in questions (short options, recommended default); the user answers them while approving. When it succeeds, stop; the run resumes with the decision and answers. If the user asks for changes, revise the plan and request approval again.'),
@@ -256,7 +258,7 @@ class ToolRunner:
         if name == 'slice_with_bambu':
             from .bambu import Store, slice_build
             work=self.settings.data_dir/'workspaces'/tid/rid
-            return await asyncio.to_thread(slice_build,self.db,self.store,Store(self.settings.data_dir),tid,rid,args.get('build_id'),work)
+            return await asyncio.to_thread(slice_build,self.db,self.store,Store(self.settings.data_dir),tid,rid,args.get('build_id'),work,args.get('parts'))
         if name == 'choose_rules':
             from .rules import choose
             return choose(self.db,tid,rid,args['decisions'])

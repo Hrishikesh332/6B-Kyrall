@@ -1,0 +1,34 @@
+{
+	admin off
+	auto_https off
+}
+
+# Railway sets PORT; BACKEND_URL is the API service's private address,
+# e.g. http://backend.railway.internal:8080
+:{$PORT:8080} {
+	encode zstd gzip
+
+	@api path /api/* /openapi.json
+	handle @api {
+		reverse_proxy {$BACKEND_URL} {
+			# Railway's edge terminates HTTPS, so the browser's origin is https://<this host>;
+			# the backend compares it with the forwarded Host and scheme.
+			header_up X-Forwarded-Proto https
+			# Task progress is streamed as server-sent events.
+			flush_interval -1
+		}
+	}
+
+	handle /docs {
+		rewrite * /docs.html
+	}
+
+	handle {
+		root * /srv
+		@html path / /index.html /docs.html
+		header @html Cache-Control "no-cache"
+		header /assets/* Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+}

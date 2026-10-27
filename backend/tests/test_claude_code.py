@@ -3,7 +3,7 @@ import os
 import pytest
 import claude_agent_sdk
 from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, TextBlock, ToolUseBlock, UserMessage
-from app.claude_code import MAX_STEERS, PREFIX, STEER, claude_env, run_claude
+from app.claude_code import MAX_STEERS, PREFIX, STEER, claude_env, count_usage, run_claude
 from app.config import Settings
 from app.main import create_app
 from app.models import ClarificationAnswer
@@ -236,3 +236,14 @@ def test_connection_switch_waits_for_running_work(app, task, monkeypatch):
     response = app.test_client().put('/api/integrations/model', json={'provider':'claude'})
     assert response.status_code == 422 and 'current run' in response.json['detail']
     assert app.state.settings.provider == 'workshop'
+
+
+def test_usage_counts_each_response_once_and_budgets_fresh_tokens():
+    usage = {'input_tokens': 2, 'output_tokens': 8, 'cache_creation_input_tokens': 90, 'cache_read_input_tokens': 900}
+    blocks = [AssistantMessage(content=[TextBlock(text='x')], model='m', usage=usage, message_id='msg_1') for _ in range(3)]
+    final = AssistantMessage(content=[TextBlock(text='y')], model='m', usage={**usage, 'output_tokens': 40}, message_id='msg_1')
+    state, counted = {'fresh': 0, 'total': 0}, {}
+    for message in [*blocks, final]: count_usage(state, counted, message)
+    assert state == {'fresh': 132, 'total': 1032}
+    count_usage(state, counted, AssistantMessage(content=[], model='m', usage=usage, message_id='msg_2'))
+    assert state == {'fresh': 232, 'total': 2032}

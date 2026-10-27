@@ -144,6 +144,14 @@ def _gcode_stats(path):
     return stats
 
 
+def _slice_error(message):
+    message = message or 'Slicing failed'
+    if 'boundary' in message:
+        # Bambu arranges everything on one plate; a split into plates is the caller's choice.
+        message += ' The parts do not fit on one plate together: slice them in smaller groups with parts=[...].'
+    return message
+
+
 def slice_parts(store, stls, work, timeout=240):
     """Slice the given STL files on one plate; returns (summary, project_3mf_path)."""
     exe = binary()
@@ -185,7 +193,7 @@ def slice_parts(store, stls, work, timeout=240):
     warnings = [w.strip() for w in re.split(r'\n+', plate.get('warning_message') or '') if w.strip()]
     summary = {
         'ok': bool(gcode) and result.get('return_code', 0) in (0, -13),  # -13: only the project export failed
-        'error': None if gcode else (result.get('error_string') or 'Slicing failed'),
+        'error': None if gcode else _slice_error(result.get('error_string')),
         'printer': settings['machine'], 'process': settings['process'], 'filament': settings['filament'],
         'estimated_time': stats.get('estimated_time'),
         'estimated_seconds': round(plate.get('total_predication') or 0),
@@ -204,8 +212,11 @@ def slice_parts(store, stls, work, timeout=240):
     return summary, (project if project.exists() else None), gcode
 
 
-def slice_build(db, store, settings_store, tid, rid, build_id=None, work_root=None):
-    """Slice every STL of a build (latest by default) and save the summary and 3MF project."""
+REFERENCE = re.compile(r'(^|_)(ref|reference)$')
+
+
+def slice_build(db, store, settings_store, tid, rid, build_id=None, work_root=None, parts=None):
+    """Slice a build's printed STLs (latest build by default) and save the summary and 3MF project."""
     row = db.one("SELECT metadata FROM artifacts WHERE task_id=? AND json_extract(metadata,'$.kind')='validation' "
                  + ("AND json_extract(metadata,'$.build_id')=? " if build_id else '') + 'ORDER BY created_at DESC LIMIT 1',
                  (tid, build_id) if build_id else (tid,))
@@ -214,11 +225,20 @@ def slice_build(db, store, settings_store, tid, rid, build_id=None, work_root=No
     build_id = row['metadata']['build_id']
     files = db.all("SELECT id,name FROM artifacts WHERE task_id=? AND json_extract(metadata,'$.build_id')=? "
                    "AND name LIKE '%.stl' ORDER BY name", (tid, build_id))
+    stem = lambda f: f['name'][:-4]
+    if parts:
+        missing = sorted(set(parts) - {stem(f) for f in files})
+        if missing:
+            raise ValueError(f'Not in this build: {", ".join(missing)}. Parts: {", ".join(stem(f) for f in files)}')
+        files = [f for f in files if stem(f) in parts]
+    else:
+        files = [f for f in files if not REFERENCE.search(stem(f))]
     if not files:
         raise ValueError('This build has no STL parts to slice')
     from .db import uid
     work = Path(work_root) / uid()
     summary, project, _ = slice_parts(settings_store, [store.get(tid, f['id'])[1] for f in files], work)
+    summary['parts'] = [stem(f) for f in files]
     meta = {'build_id': build_id, 'printer': summary['printer'], 'filament': summary['filament']}
     saved = store.put(tid, rid, 'bambu_slice.json', json.dumps(summary, indent=2).encode(),
                       {**meta, 'kind': 'print_slice', 'slice_ok': summary['ok'], 'warnings': len(summary['warnings'])})

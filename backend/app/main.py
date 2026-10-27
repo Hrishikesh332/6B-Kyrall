@@ -94,6 +94,7 @@ def create_app(settings=None,provider=None):
     engine=Engine(db,runner,settings,provider)
     mesh_samples=MeshSamples()
     app=API()
+    app.config['TRUSTED_HOSTS']=[*app.config['TRUSTED_HOSTS'],*settings.allowed_hosts]
     app.state.db,app.state.engine,app.state.store,app.state.settings=db,engine,store,settings
     app.state.runtime=WorkerRuntime(engine,lambda stop:scheduler(db,stop))
 

@@ -30,6 +30,8 @@ class Settings:
     cad_timeout: int = field(default_factory=lambda: int(os.getenv("6B_CAD_TIMEOUT", "90")))
     tool_timeout: float = field(default_factory=lambda: float(os.getenv("6B_TOOL_TIMEOUT", "180")))
     reference_domains: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip().lower() for x in os.getenv("6B_REFERENCE_DOMAINS", "").split(",") if x.strip()))
+    # Hosted deployments: extra Host names to accept (".example.com" matches subdomains).
+    allowed_hosts: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip().lower() for x in os.getenv("6B_ALLOWED_HOSTS", "").split(",") if x.strip()))
     frontend_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parents[2] / "frontend")
     worker_enabled: bool = True
     isaac_ssh_host: str = field(default_factory=lambda: os.getenv('6B_ISAAC_SSH_HOST', ''))

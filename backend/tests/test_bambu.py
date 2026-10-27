@@ -28,10 +28,20 @@ async def test_bambu_profiles_slice_and_agent_tool(app):
         assert 'error' not in await runner.execute(tid, run['id'], 'b', 'build_cad_script', {'name': 'box', 'script': ENCLOSURE})
         sliced = await runner.execute(tid, run['id'], 's', 'slice_with_bambu', {})
         assert sliced['ok'] and sliced['filament_g'] > 1 and sliced['estimated_time'] and sliced['layers'] > 10
-        assert {o['name'] for o in sliced['objects']} == {'base.stl', 'lid.stl'}
+        assert {o['name'] for o in sliced['objects']} == {'base.stl', 'lid.stl'} and sliced['parts'] == ['base', 'lid']
+        lid = await runner.execute(tid, run['id'], 's2', 'slice_with_bambu', {'parts': ['lid']})
+        assert {o['name'] for o in lid['objects']} == {'lid.stl'}
+        missing = await runner.execute(tid, run['id'], 's3', 'slice_with_bambu', {'parts': ['hinge']})
+        assert 'Not in this build: hinge' in missing['error']
         names = {a['name'] for a in db.detail(tid)['artifacts']}
         assert {'bambu_slice.json', 'bambu_project.3mf'} <= names
         again = (await c.post(f'/api/tasks/{tid}/slice')).json()
         assert again['printer'] == 'Bambu Lab A1 0.4 nozzle'
         caps = (await c.get('/api/capabilities')).json()
         assert next(i for i in caps['integrations'] if i['name'] == 'Bambu Studio')['status'] == 'connected'
+
+
+def test_reference_parts_are_left_off_the_plate():
+    from app.bambu import REFERENCE, _slice_error
+    assert [n for n in ('tomato_ref', 'cylinder_reference', 'finger_1', 'refill_cap', 'mount_hub') if REFERENCE.search(n)] == ['tomato_ref', 'cylinder_reference']
+    assert 'parts=[...]' in _slice_error('Some objects are located over the boundary of the heated bed.')

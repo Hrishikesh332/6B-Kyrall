@@ -10,6 +10,11 @@ if __name__ == '__main__':
     from app.main import create_app
     app=create_app()
     try:
-        serve(app,host='127.0.0.1',port=int(os.getenv('6B_PORT','8765')),threads=12)
+        # Hosts such as Railway set PORT and need 6B_HOST=* (all IPv4 and IPv6 interfaces).
+        host=os.getenv('6B_HOST') or '127.0.0.1'
+        port=int(os.getenv('PORT') or os.getenv('6B_PORT') or '8765')
+        # Behind a reverse proxy, trust its X-Forwarded-Proto so same-origin checks see https.
+        proxy={'trusted_proxy':'*','trusted_proxy_headers':'x-forwarded-proto'} if os.getenv('6B_BEHIND_PROXY','').lower() in ('1','true','yes') else {}
+        serve(app,listen=f'{host}:{port}',threads=12,**proxy)
     finally:
         app.state.runtime.close()

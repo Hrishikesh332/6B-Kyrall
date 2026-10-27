@@ -94,6 +94,25 @@ def default_client(options):
     return ClaudeSDKClient(options)
 
 
+def count_usage(state, counted, message):
+    """Add one API response's usage once.
+
+    The SDK emits an AssistantMessage per content block (thinking, each tool call), each
+    repeating its response's usage, so usage is keyed by message id and only growth is added.
+    The run budget counts fresh tokens; cache reads re-read context at a tenth of the price
+    and are reported in the total only.
+    """
+    usage=message.usage or {}
+    fresh=sum(usage.get(k) or 0 for k in ('input_tokens','output_tokens','cache_creation_input_tokens'))
+    cached=usage.get('cache_read_input_tokens') or 0
+    key=getattr(message,'message_id',None) or id(message)
+    old_fresh,old_cached=counted.get(key,(0,0))
+    fresh,cached=max(fresh,old_fresh),max(cached,old_cached)
+    counted[key]=(fresh,cached)
+    state['fresh']+=fresh-old_fresh
+    state['total']+=fresh+cached-old_fresh-old_cached
+
+
 MAX_STEERS = 2
 STEER = ('6B interrupted your last response: it reasoned for several minutes without calling a tool. '
          'Do not work out the whole design in one pass. Make the next tool call now: build the simplest version '
@@ -111,8 +130,9 @@ async def run_claude(engine, run, client_factory=default_client):
     checkpoint=run['checkpoint'] or {}
     unresolved=checkpoint.get('unresolved_errors',{})
     prior_tokens=checkpoint.get('total_tokens',0)
-    state={'count':checkpoint.get('tool_calls',0),'total':prior_tokens,'pause':None,'abort':None,'calls':0,
-           'busy':0,'progress':time.monotonic()}
+    state={'count':checkpoint.get('tool_calls',0),'total':prior_tokens,'fresh':checkpoint.get('fresh_tokens',prior_tokens),
+           'pause':None,'abort':None,'calls':0,'busy':0,'progress':time.monotonic()}
+    counted={}
     repairs=checkpoint.get('completion_repairs',0)
     # Each resume is a fresh provider session over saved application state.
     session_id=uid()
@@ -138,7 +158,7 @@ async def run_claude(engine, run, client_factory=default_client):
                 _,path=engine.runner.store.get(tid,image)
                 content.append({'type':'image','data':base64.b64encode(path.read_bytes()).decode(),'mimeType':'image/png'})
                 if name!='inspect_image': db.emit(tid,rid,'image.inspected',{'artifact_id':image,'automatic':True})
-            saved={'provider':'claude','tool_calls':state['count'],'total_tokens':state['total'],'unresolved_errors':unresolved,'completion_repairs':repairs}
+            saved={'provider':'claude','tool_calls':state['count'],'total_tokens':state['total'],'fresh_tokens':state['fresh'],'unresolved_errors':unresolved,'completion_repairs':repairs}
             if name in ('ask_questions','request_approval') and isinstance(result,dict) and (result.get('questionnaire_id') or result.get('approval_id')):
                 state['pause']=True
                 saved['questionnaire_id' if name=='ask_questions' else 'approval_id']=result.get('questionnaire_id') or result['approval_id']
@@ -181,7 +201,7 @@ async def run_claude(engine, run, client_factory=default_client):
         while time.monotonic()<deadline:
             engine.runner.check_cancel(rid)
             if state['abort']: raise ProviderError(state['abort'])
-            if state['total']>=settings.max_run_tokens: raise ProviderError('Claude run token budget reached')
+            if state['fresh']>=settings.max_run_tokens: raise ProviderError('Claude run token budget reached')
             quiet=time.monotonic()-state['progress']
             if not steering and not state['busy'] and not state['pause'] and quiet>settings.claude_stall_seconds:
                 # Adaptive thinking has no per-response cap; a response that reasons for minutes
@@ -212,10 +232,10 @@ async def run_claude(engine, run, client_factory=default_client):
                     raise ProviderError('Claude attempted an operation outside the registered engineering tools')
                 if texts and uses: db.emit(tid,rid,'activity',{'title':'Claude update','detail':'\n'.join(texts)[:1500]})
                 elif texts: final_text='\n'.join(texts)
-                usage=message.usage or {}
-                state['total']+=sum(usage.get(k) or 0 for k in ('input_tokens','output_tokens','cache_creation_input_tokens','cache_read_input_tokens'))
+                count_usage(state,counted,message)
                 with db.transaction() as c:
-                    c.execute('UPDATE runs SET usage=? WHERE id=?',(encode({'provider':'claude','model':message.model or model,'total_tokens':state['total'],'tool_calls':state['count']}),rid))
+                    c.execute('UPDATE runs SET usage=? WHERE id=?',(encode({'provider':'claude','model':message.model or model,'total_tokens':state['total'],
+                                                                           'fresh_tokens':state['fresh'],'tool_calls':state['count']}),rid))
                     db.event(c,tid,rid,'usage.updated',{'total_tokens':state['total'],'tool_calls':state['count']})
             elif isinstance(message,ResultMessage):
                 if state['pause']:
