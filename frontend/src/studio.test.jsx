@@ -439,9 +439,7 @@ describe("Onshape entry point", () => {
         openTask={vi.fn()}
       />,
     );
-    await user.click(
-      screen.getByRole("button", { name: /Working in Onshape/ }),
-    );
+    await user.click(screen.getByRole("button", { name: "Connect Onshape" }));
     expect(setModal).toHaveBeenCalledWith({ kind: "onshape" });
     expect(createTask).not.toHaveBeenCalled();
   });

@@ -1,0 +1,197 @@
+/* Home: one question, one composer, a few quiet ways to start. */
+.home {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.home-hero {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: min(64vh, 620px);
+}
+.home:has(.home-recents) .home-hero {
+  min-height: min(46vh, 440px);
+}
+.home-hero h1 {
+  margin: 0 0 28px;
+  text-align: center;
+  font-size: clamp(28px, 3.2vw, 36px);
+  font-weight: 450;
+  line-height: 1.2;
+  letter-spacing: -1px;
+  color: #ececec;
+}
+
+.home .composer {
+  background: #1f1f1f;
+  border: 1px solid #2f2f2f;
+  border-radius: 18px;
+  box-shadow: 0 10px 40px #0000004d;
+  transition: border-color 0.15s;
+}
+.home .composer:focus-within {
+  border-color: #4a4a4a;
+}
+.home .composer textarea {
+  min-height: 96px;
+  padding: 20px 20px 8px;
+  font-size: 15px;
+  line-height: 1.55;
+  resize: none;
+}
+.home .composer textarea::placeholder {
+  color: #7a7a7a;
+}
+.home .composer-footer {
+  border-top: 0;
+  padding: 8px 10px 10px 12px;
+  gap: 4px;
+}
+.home .context-controls select,
+.home .model-picker select {
+  background-color: transparent;
+  border-color: transparent;
+  border-radius: 8px;
+  color: #a3a3a3;
+  font-size: 12px;
+}
+.home .context-controls select:hover,
+.home .model-picker select:hover {
+  background-color: #2a2a2a;
+  color: #dcdcdc;
+}
+.home .send {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+.home .send:disabled {
+  background: #2c2c2c;
+  color: #777;
+  opacity: 1;
+}
+
+.home-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+.home-chips button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 13px;
+  border: 1px solid #2f2f2f;
+  border-radius: 999px;
+  color: #a3a3a3;
+  font-size: 12px;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.home-chips button:hover {
+  background: #242424;
+  color: #e6e6e6;
+}
+.home-chips svg {
+  color: #7d7d7d;
+}
+.home-chips .provider-logo.is-plate {
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.home-recents {
+  margin-top: 40px;
+}
+.home-recents-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 12px 8px;
+}
+.home-recents-heading h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 450;
+  color: #8a8a8a;
+}
+.home-recents-heading a {
+  font-size: 12px;
+  color: #8a8a8a;
+}
+.home-recents-heading a:hover {
+  color: #e6e6e6;
+}
+.home-recent {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 10px;
+  text-align: left;
+  font-size: 13px;
+  color: #d4d4d4;
+}
+.home-recent:hover {
+  background: #222;
+}
+.home-recent-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-recent .badge {
+  font-size: 11px;
+}
+.home-recent time {
+  min-width: 64px;
+  text-align: right;
+  font-size: 12px;
+  color: #7d7d7d;
+}
+
+@media (max-width: 760px) {
+  .home-hero {
+    min-height: 0;
+    padding-top: 24px;
+  }
+  .home-hero h1 {
+    font-size: 26px;
+    margin-bottom: 20px;
+  }
+  .home .composer-footer {
+    display: flex;
+    flex-wrap: nowrap;
+    padding-left: 8px;
+  }
+  .home .context-controls,
+  .home .model-picker {
+    min-width: 0;
+  }
+  .home .context-controls select,
+  .home .model-picker select {
+    width: 100%;
+    min-width: 0;
+    padding-right: 20px;
+  }
+  /* Icon-only on phones so both pickers keep readable labels. */
+  .home .send {
+    margin-left: auto;
+    width: 34px;
+    padding: 0;
+    gap: 0;
+    font-size: 0;
+  }
+  .home-recent .badge {
+    display: none;
+  }
+}
