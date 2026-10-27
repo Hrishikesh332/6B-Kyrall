@@ -29,6 +29,12 @@ class FakeFirebase:
         return cookie, ACCOUNTS[cookie]
 
 
+def _row(node):
+    """A row as the copy holds it: the exact SQLite row as JSON text."""
+    assert isinstance(node, str)
+    return json.loads(node)
+
+
 def signed_in_app(tmp_path, required=True, database=None, **settings):
     return create_app(Settings(data_dir=tmp_path, provider='workshop', model='', api_token='', worker_enabled=False, **settings),
                       firebase=FakeFirebase(required, database))
@@ -136,7 +142,7 @@ def test_the_owner_takes_a_personal_workspace_and_backs_it_up_on_sign_in(tmp_pat
     assert database.data['users']['a']['profile']['email'] == 'a@example.com'
     chat = database.data['users']['a']['chats'][earlier]
     assert chat['title'] == 'Made before sign-in' and chat['synced_on'] == 'sign-in'
-    assert list(database.data['users']['a']['messages'][earlier].values())[0]['content'] == 'Made before sign-in'
+    assert json.loads(_row(list(database.data['users']['a']['messages'][earlier].values())[0])['content']) == 'Made before sign-in'
     assert app.state.db.require_task(earlier)['cloud_synced_at']
 
 
@@ -211,7 +217,10 @@ class FakeReference:
             if not isinstance(here, dict) or part not in here: return None
             here = here[part]
         if shallow and isinstance(here, dict): return {k: True for k in here}
-        # Like the real database, a read never hands out the stored objects themselves.
+        # Like the real database, children keyed 0, 1, 2 ... come back as a list (with None for gaps),
+        # and a read never hands out the stored objects themselves.
+        if isinstance(here, dict) and here and all(k.isdigit() for k in here) and len(here) * 2 > max(map(int, here)):
+            return [copy.deepcopy(here.get(str(i))) for i in range(max(map(int, here)) + 1)]
         return copy.deepcopy(here)
 
 
@@ -286,7 +295,7 @@ def test_a_fresh_server_loads_back_an_accounts_chats_and_memories(tmp_path):
         c.execute("INSERT INTO memories VALUES('mem-1',?,?,'\"Iris closes evenly\"',2)", (task, project['id']))
     first.state.cloud.push(task, 'started').result()
     first.state.cloud.close()
-    assert database.data['users']['a']['memories'][task]['mem-1']['content'] == 'Iris closes evenly'
+    assert json.loads(_row(database.data['users']['a']['memories'][task]['mem-1'])['content']) == 'Iris closes evenly'
 
     fresh = signed_in_app(tmp_path / 'fresh', required=False, database=database)
     _signed_in(fresh, 'a')
@@ -353,3 +362,135 @@ def test_rules_are_not_overwritten_when_the_copy_cannot_be_read(tmp_path):
     database.down = False
     app.state.cloud.close()
     assert database.data['users']['a']['rules'] == {'r1': {'id': 'r1', 'content': 'Keep me'}}
+
+
+def test_files_go_up_in_pieces_and_come_back_on_a_fresh_server(tmp_path, monkeypatch):
+    monkeypatch.setattr('app.firebase.CHUNK', 4)
+    database = FakeDatabase()
+    first = signed_in_app(tmp_path / 'first', required=False, database=database)
+    task = as_account(first, 'a').post('/api/tasks', json={'prompt': 'Design a gripper'}).json['id']
+    part = first.state.store.put(task, None, 'gripper.stl', b'solid gripper\n', {'kind': 'cad', 'part.name': 'jaw'})
+    empty = first.state.store.put(task, None, 'notes.txt', b'', {'kind': 'notes'})
+    first.state.cloud.push(task, 'finished').result()
+    first.state.cloud.close()
+    copy_of = database.data['users']['a']
+    assert copy_of['stored'][task] == {part['id']: 4, empty['id']: 0} and len(copy_of['blobs'][task][part['id']]) == 4
+
+    fresh = signed_in_app(tmp_path / 'fresh', required=False, database=database)
+    fresh.state.cloud.close()
+    files = {a['name']: a for a in as_account(fresh, 'a').get(f'/api/tasks/{task}').json['artifacts']}
+    assert files['gripper.stl']['metadata'] == {'kind': 'cad', 'part.name': 'jaw'} and files['gripper.stl']['sha256'] == part['sha256']
+    assert fresh.state.store.get(task, part['id'])[1].read_bytes() == b'solid gripper\n'
+    assert fresh.state.store.get(task, empty['id'])[1].read_bytes() == b''
+
+
+def test_files_reach_a_chat_that_was_restored_before_them_and_bad_copies_are_skipped(tmp_path):
+    database = FakeDatabase()
+    first = signed_in_app(tmp_path / 'first', required=False, database=database)
+    task = as_account(first, 'a').post('/api/tasks', json={'prompt': 'Design a gripper'}).json['id']
+    first.state.cloud.push(task, 'started').result()
+    first.state.cloud.close()
+    # A server that restored the chat while its files were not in the copy yet.
+    fresh = signed_in_app(tmp_path / 'fresh', required=False, database=database)
+    fresh.state.cloud.pool.submit(lambda: None).result()  # its startup restore is done
+    assert fresh.state.db.all('SELECT id FROM artifacts') == []
+
+    good = first.state.store.put(task, None, 'jaw.stl', b'jaw', {'kind': 'cad'})
+    bad = first.state.store.put(task, None, 'base.stl', b'base', {'kind': 'cad'})
+    later = CloudSync(first.state.db, database, first.state.settings.data_dir)
+    assert later.backfill(task).result() is True
+    later.close()
+    database.data['users']['a']['blobs'][task][bad['id']]['c0'] = base64.b64encode(b'tampered').decode()
+    # Another account's copy of the same chat id is never mixed in.
+    database.data['users']['b'] = copy.deepcopy(database.data['users']['a'])
+
+    _signed_in(fresh, 'a')
+    fresh.state.cloud.close()
+    assert [a['id'] for a in fresh.state.db.all('SELECT id FROM artifacts')] == [good['id']]
+    assert fresh.state.store.get(task, good['id'])[1].read_bytes() == b'jaw'
+
+
+EXACT_TABLES = {'tasks': 'id', 'runs': 'id', 'messages': 'id', 'questionnaires': 'id', 'approvals': 'id', 'artifacts': 'id',
+                'tool_calls': 'id', 'memories': 'id', 'rule_checks': 'id', 'task_rule_sets': 'rule_set'}
+
+
+def _exact_rows(app, task):
+    """Every row of the chat as SQLite holds it, but this server's own bookkeeping (sync time, event numbers)."""
+    with app.state.db.connect() as c:
+        rows = {t: [dict(r) for r in c.execute(f'SELECT * FROM {t} WHERE {"id" if t == "tasks" else "task_id"}=? ORDER BY {k}', (task,))]
+                for t, k in EXACT_TABLES.items()}
+        rows['events'] = [dict(r) for r in c.execute('SELECT run_id,type,payload,created_at FROM events WHERE task_id=? ORDER BY seq', (task,))]
+    rows['tasks'][0].pop('cloud_synced_at')
+    return rows
+
+
+def _full_chat(app):
+    """A chat holding every kind of row: a waiting run with its approval, a 300 KB tool result, events, rule
+    decisions and checks, a memory, a file and a raw provider log."""
+    task = as_account(app, 'a').post('/api/tasks', json={'prompt': 'Design a tomato gripper'}).json['id']
+    db, run = app.state.db, app.state.db.one('SELECT id FROM runs WHERE task_id=?', (task,))['id']
+    with db.transaction() as c:
+        c.execute("UPDATE runs SET status='awaiting_input',checkpoint=?,usage='{\"total_tokens\":12345}' WHERE id=?", ('{"tool_calls":7,"total_tokens":12345}', run))
+        c.execute("UPDATE tasks SET status='awaiting_input',plan='[{\"step\":\"Jaw\",\"done\":false}]' WHERE id=?", (task,))
+        c.execute("INSERT INTO tool_calls VALUES('call-1',?,?,'build_cad','{\"a.b\":[1,2]}',?,'completed',1.25,2.5)", (task, run, json.dumps({'log': 'x' * 300_000})))
+        c.execute("INSERT INTO questionnaires VALUES('q-1',?,?,'Size','[{\"id\":\"w\"}]','{\"w\":\"40 mm\"}','answered',3)", (task, run))
+        c.execute("INSERT INTO approvals VALUES('ap-1',?,?,'{\"summary\":\"Print it?\"}',NULL,'pending',4,NULL)", (task, run))
+        c.execute("INSERT INTO memories VALUES('mem-1',?,NULL,'\"Iris closes evenly\"',5)", (task,))
+        c.execute("INSERT INTO rule_checks VALUES('rc-1',?,?,'r1','passed','Walls 1.4 mm','[\"a1\"]','build-1',6)", (task, run))
+        c.execute("INSERT INTO task_rule_sets VALUES(?,'printing',1,'FDM part','model',7)", (task,))
+        for i in range(3):
+            db.event(c, task, run, 'activity', {'text': f'step {i}', '': None})
+    app.state.store.put(task, run, 'jaw.stl', b'solid jaw\n' * 1000, {'kind': 'cad', 'part.name': 'jaw'})
+    logs = app.state.settings.data_dir / 'sessions' / task
+    logs.mkdir(parents=True)
+    (logs / f'{run}.jsonl').write_text('{"kind":"request"}\n' * 500)
+    return task, run
+
+
+def test_a_restored_chat_is_identical_to_the_one_copied(tmp_path, monkeypatch):
+    monkeypatch.setattr('app.firebase.CHUNK', 1000)
+    database = FakeDatabase()
+    first = signed_in_app(tmp_path / 'first', required=False, database=database)
+    task, run = _full_chat(first)
+    first.state.cloud.push(task, 'started').result()
+    first.state.cloud.close()
+
+    fresh = signed_in_app(tmp_path / 'fresh', required=False, database=database)
+    fresh.state.cloud.close()
+    assert _exact_rows(fresh, task) == _exact_rows(first, task)
+    # A run waiting for an approval still waits, to be approved here.
+    assert fresh.state.db.require_task(task)['status'] == 'awaiting_input'
+    assert (fresh.state.settings.data_dir / 'sessions' / task / f'{run}.jsonl').read_text() == '{"kind":"request"}\n' * 500
+    assert (fresh.state.settings.data_dir / 'sessions' / task / 'transcript.md').is_file()
+
+
+def test_a_lossy_earlier_restore_is_brought_up_to_the_copy(tmp_path):
+    database = FakeDatabase()
+    first = signed_in_app(tmp_path / 'first', required=False, database=database)
+    task, _ = _full_chat(first)
+    first.state.cloud.push(task, 'started').result()
+    first.state.cloud.close()
+    fresh = signed_in_app(tmp_path / 'fresh', required=False, database=database)
+    fresh.state.cloud.close()
+    # What a restore from the older, readable copy left: a cut tool result, no events, no approval.
+    with fresh.state.db.transaction() as c:
+        c.execute("UPDATE tool_calls SET result='{\"truncated\":true}' WHERE id='call-1'")
+        c.execute('DELETE FROM events WHERE task_id=?', (task,))
+        c.execute('DELETE FROM approvals')
+    again = signed_in_app(tmp_path / 'fresh', required=False, database=database)
+    again.state.cloud.close()
+    assert _exact_rows(again, task) == _exact_rows(first, task)
+
+
+def test_a_chat_with_a_run_going_here_is_never_touched_by_a_restore(tmp_path):
+    database = FakeDatabase()
+    app = signed_in_app(tmp_path, required=False, database=database)
+    task = as_account(app, 'a').post('/api/tasks', json={'prompt': 'Keep going'}).json['id']
+    app.state.cloud.push(task, 'started').result()
+    with app.state.db.transaction() as c:
+        c.execute("UPDATE runs SET status='running' WHERE task_id=?", (task,))
+    database.data['users']['a']['chats'][task]['row'] = json.dumps({**_row(database.data['users']['a']['chats'][task]['row']), 'title': 'Changed elsewhere'})
+    app.state.cloud.restore('a').result()
+    app.state.cloud.close()
+    assert app.state.db.require_task(task)['title'] == 'Keep going'
+    assert app.state.db.one('SELECT status FROM runs WHERE task_id=?', (task,))['status'] == 'running'

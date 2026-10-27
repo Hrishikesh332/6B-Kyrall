@@ -99,13 +99,14 @@ def create_app(settings=None,provider=None,firebase=None):
     engine=Engine(db,runner,settings,provider)
     firebase=firebase or Firebase(settings)
     # Each chat's Realtime Database copy is pushed when a run starts and when it stops.
-    cloud=engine.cloud=CloudSync(db,firebase.database())
+    cloud=engine.cloud=CloudSync(db,firebase.database(),settings.data_dir)
     # A fresh server (new deploy, lost volume) first loads back the chats and rules it is missing.
     cloud.restore_all(settings.owner_email if firebase.sign_in else None,workspace_rules=not firebase.sign_in)
-    # Chats whose copy never arrived (the database was missing or offline) are sent again on start.
-    # With sign-in on, chats nobody owns yet wait for their owner's sign-in instead.
-    for row in db.all('SELECT id FROM tasks WHERE cloud_synced_at IS NULL'+(' AND owner IS NOT NULL' if firebase.sign_in else '')+' ORDER BY created_at') if cloud.pool else ():
-        cloud.push(row['id'],'startup')
+    # Chats whose copy never arrived (the database was missing or offline) or is in an older format are
+    # sent whole on start, and any file or log bytes the copy lacks. With sign-in on, chats nobody owns
+    # yet wait for their owner's sign-in instead.
+    for row in db.all('SELECT id FROM tasks'+(' WHERE owner IS NOT NULL' if firebase.sign_in else '')+' ORDER BY created_at') if cloud.pool else ():
+        cloud.backfill(row['id'])
     mesh_samples=MeshSamples()
     app=API()
     app.config['TRUSTED_HOSTS']=[*app.config['TRUSTED_HOSTS'],*settings.allowed_hosts]

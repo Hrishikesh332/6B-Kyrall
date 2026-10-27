@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 import os
 from dotenv import load_dotenv
 from waitress import serve
@@ -7,6 +8,9 @@ if __name__ == '__main__':
     root=Path(__file__).resolve().parent
     os.chdir(root)
     load_dotenv(root/'.env')
+    # Without this Python shows warnings only, so hosts' logs never show e.g. the cloud restore.
+    logging.basicConfig(level=logging.INFO,format='%(levelname)s %(name)s: %(message)s')
+    logging.getLogger('httpx').setLevel(logging.WARNING)  # one line per model request otherwise
     from app.main import create_app
     app=create_app()
     try:
