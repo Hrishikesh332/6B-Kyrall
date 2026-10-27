@@ -10,7 +10,14 @@ import {
 } from "lucide-react";
 import { api } from "./lib.js";
 import { useResource } from "./hooks.js";
-import { Empty, ErrorNotice, IconButton, Loading, PageHeading } from "./ui.jsx";
+import {
+  ConfirmButton,
+  Empty,
+  ErrorNotice,
+  IconButton,
+  Loading,
+  PageHeading,
+} from "./ui.jsx";
 
 const GENERAL = "";
 
@@ -257,8 +264,19 @@ function RuleGroup({ name, rules, busy, act }) {
               <input
                 aria-label={`Applies when: ${name}`}
                 value={draft}
+                autoFocus
                 onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setEditing(false);
+                }}
               />
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setEditing(false)}
+              >
+                Cancel
+              </button>
               <button className="primary" disabled={busy}>
                 Save
               </button>
@@ -271,7 +289,10 @@ function RuleGroup({ name, rules, busy, act }) {
               </p>
               <IconButton
                 label={`Edit when ${name} applies`}
-                onClick={() => setEditing(true)}
+                onClick={() => {
+                  setDraft(when);
+                  setEditing(true);
+                }}
               >
                 <Pencil size={13} />
               </IconButton>
@@ -321,10 +342,12 @@ function RuleGroup({ name, rules, busy, act }) {
               <span className="rule-scope">
                 {rule.project_name || "All projects"}
               </span>
-              <IconButton
+              <ConfirmButton
+                className="icon-button"
                 label={`Delete rule: ${rule.content}`}
+                confirm="Delete?"
                 disabled={busy}
-                onClick={() =>
+                onConfirm={() =>
                   act(
                     () => api(`/rules/${rule.id}`, { method: "DELETE" }),
                     "Rule deleted.",
@@ -332,7 +355,7 @@ function RuleGroup({ name, rules, busy, act }) {
                 }
               >
                 <Trash2 size={15} />
-              </IconButton>
+              </ConfirmButton>
             </li>
           ))}
         </ul>

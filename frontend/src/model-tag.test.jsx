@@ -8,6 +8,8 @@ describe("model tag", () => {
     expect(modelLabel("claude-sonnet-5")).toBe("Sonnet 5");
     expect(modelLabel("claude-sonnet-4-5-20250929")).toBe("Sonnet 4.5");
     expect(modelLabel("gpt-5.1")).toBe("GPT-5.1");
+    expect(modelLabel("gpt-6-astra")).toBe("GPT-6 Astra");
+    expect(modelLabel("gpt-6.1-terra")).toBe("GPT-6.1 Terra");
     expect(modelMaker("claude-haiku-5-5")).toBe("anthropic");
     expect(modelMaker("gpt-5.1")).toBe("openai");
     expect(modelMaker("workshop")).toBe(null);

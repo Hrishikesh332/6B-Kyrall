@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RefreshCw, RotateCcw, SlidersHorizontal, X } from "lucide-react";
 import { IconButton } from "./ui.jsx";
 
@@ -127,14 +127,25 @@ function NumberParameter({ parameter: p, value, disabled, onChange }) {
   const changed = value !== p.value;
   const commit = (raw) => {
     const number = Number(raw);
-    if (!Number.isFinite(number)) return;
+    if (raw === "" || !Number.isFinite(number)) return value;
     const clamped = Math.min(p.max, Math.max(p.min, number));
-    onChange(
+    const next =
       p.type === "integer"
         ? Math.round(clamped)
-        : Number(clamped.toFixed(Math.max(digits, 3))),
-    );
+        : Number(clamped.toFixed(Math.max(digits, 3)));
+    onChange(next);
+    return next;
   };
+  // The box keeps what is typed, so "25" can pass through "2" when the minimum is 10;
+  // it applies at once while in range and is clamped when the field is left.
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText(String(value)), [value]);
+  const type = (raw) => {
+    setText(raw);
+    const number = Number(raw);
+    if (raw !== "" && number >= p.min && number <= p.max) commit(raw);
+  };
+  const settle = () => setText(String(commit(text)));
   return (
     <div className={`parameter${changed ? " is-changed" : ""}`}>
       <div className="parameter-head">
@@ -148,9 +159,13 @@ function NumberParameter({ parameter: p, value, disabled, onChange }) {
           min={p.min}
           max={p.max}
           step={p.step}
-          value={value}
+          value={text}
           disabled={disabled}
-          onChange={(e) => commit(e.target.value)}
+          onChange={(e) => type(e.target.value)}
+          onBlur={settle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") settle();
+          }}
         />
       </div>
       <div className="parameter-track">

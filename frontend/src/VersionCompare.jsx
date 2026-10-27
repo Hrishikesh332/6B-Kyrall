@@ -95,9 +95,14 @@ export default function VersionCompare({
           0,
           shown.findIndex((b) => b.build_id === currentBuild),
         );
-        const to = shown[index] || shown.at(-1);
-        const from = shown[index - 1] || shown.find((b) => b !== to);
-        setPair([from?.build_id, to?.build_id]);
+        // The current build against the one before it; the earliest build against the next.
+        const [from, to] =
+          index > 0 ? [shown[index - 1], shown[index]] : [shown[0], shown[1]];
+        if (!from || !to)
+          setError(
+            new Error("Two versions with 3D previews are needed to compare."),
+          );
+        else setPair([from.build_id, to.build_id]);
       })
       .catch(setError);
   }, [taskId]);
@@ -106,6 +111,7 @@ export default function VersionCompare({
     const controller = new AbortController();
     setMeshes(null);
     setReport(null);
+    setError(null);
     const meshOf = (build) => {
       const file = artifacts.find(
         (a) =>

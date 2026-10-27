@@ -101,10 +101,15 @@ requests return a clear limitation instead of fabricated artifacts.
 **Direct API mode** is an alternative for operators who want to use an API key:
 
 1. Copy `.env.example` to `.env`.
-2. Set `6B_PROVIDER=openai`, `OPENAI_API_KEY`, and `6B_MODEL` to a Responses
-   API model available to your account. Set a supported `6B_REASONING_EFFORT` or
+2. Set `6B_PROVIDER=openai`, `OPENAI_API_KEY`, and `6B_MODEL` to `gpt-6-astra`,
+   `gpt-6.1-sol` or `gpt-6.1-terra`. Set a supported `6B_REASONING_EFFORT` or
    leave it empty for models without that parameter.
 3. Restart the server.
+
+On a hosted deployment (`6B_HOSTED=1`), setting `OPENAI_API_KEY` connects every visitor to
+OpenAI through that key, on `gpt-6.1-terra` unless `6B_MODEL` names one of the other two.
+Visitors pick only the model; the key stays on the server, and every signed-in account's
+OpenAI chats are billed to it.
 
 The direct Responses adapter was verified with controlled provider responses. In API mode, task content and tool results are
 sent to the configured provider; Responses storage is enabled for continuation via

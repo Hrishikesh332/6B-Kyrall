@@ -12,7 +12,7 @@ from flask import g, redirect, request, jsonify, Response, send_from_directory
 from werkzeug.datastructures import FileStorage
 from .api import API, HTTPException, FileResponse, File, Header, Query
 from .runtime import WorkerRuntime
-from .config import MODEL_PROVIDERS, VISION_PROVIDERS, Settings
+from .config import MODEL_PROVIDERS, OPENAI_MODELS, VISION_PROVIDERS, Settings
 from .db import DB, Conflict, NotFound, encode, uid
 from .artifacts import ArtifactStore
 from .tools import ToolRunner, TOOL_SPECS
@@ -20,6 +20,7 @@ from .engine import Engine
 from .cad_schema import part_dependencies
 from .cad_script import ParameterValues, apply_parameters
 from .rules import RuleSetUserDecision
+from .scope import RULES as CAD_SCOPE, OffTopic, require_cad_follow_up, require_cad_request
 from .bambu import BambuSettings
 from .models import ApprovalDecision,TaskCreate,TaskPatch,MessageCreate,ClarificationAnswer,ProjectCreate,ProjectPatch,MemoryInput,ScheduleCreate,SchedulePatch,RuleCreate,RulePatch
 from .image_intake import PHOTO_ROLES, ImageSetInput, normalize_image, save_image_set
@@ -28,7 +29,7 @@ from .mesh_samples import MeshSamples
 from .connections import NAMES, ConnectionCheck, ConnectionInput, Connections, ModelChoice
 from .config import CONNECTION, USER
 from .firebase import SESSION_COOKIE, SESSION_TTL, CloudSync, Firebase, SignInError
-from .credentials import Connection, from_headers, verify
+from .credentials import WORKSHOP, Connection, from_headers, verify
 from .chatgpt import COOKIE as CHATGPT_COOKIE, HOSTED_CALLBACK, LOCAL_CALLBACK, PLAN_SCOPE, ChatGPT, ChatGPTError
 from .onshape import BrowserCredentials, CredentialStore, OnshapeClient, OnshapeCredentials, OnshapeError, OnshapeExport, OnshapeImport, export_step, import_element, ID as ONSHAPE_ID
 
@@ -183,11 +184,15 @@ def create_app(settings=None,provider=None,firebase=None):
         if project_id and firebase.sign_in and (db.one('SELECT owner FROM projects WHERE id=?',(project_id,)) or {}).get('owner')!=account():
             raise NotFound('Project not found')
 
+    # Hosted with OPENAI_API_KEY set: the deployment's own key runs every OpenAI chat, and
+    # browsers that bring no connection of their own start on it.
+    site=Connection('openai',settings.model,settings.api_key,site=True) if settings.hosted and settings.api_key else WORKSHOP
+
     @app.before_request
     def browser_connection():
         # Hosted: answer as this browser's provider and model (never its key) for the request.
         if settings.hosted and request.path.startswith('/api/'):
-            g.connection_token=CONNECTION.set(from_headers(request.headers).fields(with_key=False))
+            g.connection_token=CONNECTION.set(from_headers(request.headers,site=site).fields(with_key=False))
 
     @app.teardown_request
     def forget_browser_connection(_exc):
@@ -199,7 +204,7 @@ def create_app(settings=None,provider=None,firebase=None):
     def keep_key(task_id):
         """Hosted: hold this browser's connection, with its key, for the task's next run."""
         if not settings.hosted: return
-        connection=from_headers(request.headers,with_key=True)
+        connection=from_headers(request.headers,with_key=True,site=site)
         if connection.provider=='chatgpt':
             # The ChatGPT token never leaves the server; the browser's sign-in cookie selects it.
             record=chatgpt.fresh(request.cookies.get(CHATGPT_COOKIE,''))
@@ -233,6 +238,7 @@ def create_app(settings=None,provider=None,firebase=None):
     app.register_error_handler(Conflict,lambda exc:(jsonify(detail=str(exc)),409))
     app.register_error_handler(NotFound,lambda exc:(jsonify(detail=str(exc)),404))
     app.register_error_handler(ValueError,lambda exc:(jsonify(detail=str(exc)),422))
+    app.register_error_handler(OffTopic,lambda exc:(jsonify(detail=str(exc),code='off_topic'),422))
 
     @app.get('/api/auth/config')
     def auth_config():
@@ -357,7 +363,7 @@ def create_app(settings=None,provider=None,firebase=None):
         # The models the active connection can run, for the model picker on a new project.
         if settings.provider=='claude': models,model=connections.claude_models(),settings.claude_model
         elif settings.openai_plan: models,model=chatgpt.models(chatgpt_cookie()),settings.model
-        elif settings.provider=='openai': models,model=[{'id':settings.model,'name':settings.model}] if settings.model else [],settings.model
+        elif settings.provider=='openai': models,model=[dict(m) for m in OPENAI_MODELS],settings.model
         else: models,model=[],''
         return {'provider':settings.provider,'plan':settings.openai_plan,'model':model,'models':models}
 
@@ -459,7 +465,7 @@ def create_app(settings=None,provider=None,firebase=None):
                          'openai':settings.model}.get(settings.provider,'Workshop recipes run without an API key')
         return {'provider':settings.provider,'provider_name':'ChatGPT plan' if settings.openai_plan else NAMES[settings.provider],'plan':settings.openai_plan,'connection_source':connections.source(),'model':model_name,'reasoning_effort':settings.reasoning_effort if settings.provider in MODEL_PROVIDERS else None,
                 'tools':[{'name':name,'description':d} for name,(_,d) in TOOL_SPECS.items()],
-                'reference_domains':settings.reference_domains,'limits':{'model_turns':settings.max_model_turns,'run_tokens':settings.max_run_tokens,'upload_bytes':10*1024*1024},
+                'reference_domains':settings.reference_domains,'cad_scope':CAD_SCOPE,'limits':{'model_turns':settings.max_model_turns,'run_tokens':settings.max_run_tokens,'upload_bytes':10*1024*1024},
                 'integrations':[{'name':'Bambu Studio','status':bambu_state(),'detail':'Slice CAD builds in your installed Bambu Studio with your printer, process and filament profiles: print time, filament, layers and Bambu\'s own printability warnings, plus a 3MF project to open.'},
                                 {'name':'Onshape','status':'connected' if onshape_keys().load() else 'not_configured','detail':'Import Part Studios or Assemblies as STL parts with a placed 3D assembly, and send generated STEP files back into a chosen Onshape document.'},
                                 {'name':'Parametric CAD','status':'available','detail':'CadQuery solid modeling, STL/STEP export and validation'},
@@ -482,6 +488,8 @@ def create_app(settings=None,provider=None,firebase=None):
 
     @app.post('/api/tasks',status_code=201)
     def create_task(data:TaskCreate,idempotency_key:str|None=Header(default=None,max_length=150)):
+        # Only CAD requests start a chat; anything else is refused before a task or run exists.
+        require_cad_request(data.prompt)
         require_own_project(data.project_id)
         # The key is held before the run is queued so the worker never sees the run without it.
         tid=uid(); keep_key(tid)
@@ -504,6 +512,8 @@ def create_app(settings=None,provider=None,firebase=None):
     @app.post('/api/tasks/{task_id}/messages',status_code=202)
     def send(task_id:str,data:MessageCreate,idempotency_key:str|None=Header(default=None,max_length=150)):
         if not data.content.strip(): raise ValueError('Message cannot be blank')
+        # Small talk or unrelated requests never start a run in a chat either.
+        require_cad_follow_up(data.content)
         content=data.content
         if data.focus: content=focused_message(store,task_id,data.focus,content)
         db.require_task(task_id); keep_key(task_id)

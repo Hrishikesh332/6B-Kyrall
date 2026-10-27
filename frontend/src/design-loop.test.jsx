@@ -35,6 +35,22 @@ const parameters = [
 ];
 
 describe("design parameters", () => {
+  it("lets a value be typed digit by digit through the minimum", async () => {
+    const user = userEvent.setup(),
+      onRebuild = vi.fn().mockResolvedValue();
+    render(<ParameterPanel parameters={parameters} onRebuild={onRebuild} />);
+    const box = screen.getByLabelText("length value");
+    await user.clear(box);
+    await user.type(box, "96"); // "9" alone is below the minimum of 50
+    expect(box).toHaveValue(96);
+    expect(screen.getByLabelText("length")).toHaveValue("96");
+    await user.tab();
+    expect(box).toHaveValue(96);
+    await user.click(
+      screen.getByRole("button", { name: "Rebuild with 1 change" }),
+    );
+    expect(onRebuild).toHaveBeenCalledWith({ length: 96 });
+  });
   it("sends only changed values, marks the original and resets", async () => {
     const user = userEvent.setup(),
       onRebuild = vi.fn().mockResolvedValue();
@@ -48,6 +64,8 @@ describe("design parameters", () => {
     fireEvent.change(screen.getByLabelText("wall value"), {
       target: { value: "9" },
     });
+    expect(screen.getByLabelText("wall value")).toHaveValue(9); // kept while typing
+    fireEvent.blur(screen.getByLabelText("wall value"));
     expect(screen.getByLabelText("wall value")).toHaveValue(4); // clamped to range
     const origin = screen.getByRole("button", { name: "Reset length to 70" });
     expect(origin.style.left).toBe("28.57142857142857%");

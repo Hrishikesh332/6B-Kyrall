@@ -14,7 +14,7 @@ const MODEL_PROVIDERS = ["claude", "openai"];
 // The model a new project runs on, listed from what the connected account can use:
 // Claude Code's own model list, or the ChatGPT plan's. Picking one changes the
 // connection's model, so later runs use it too.
-export default function ModelPicker({ cap, onChange }) {
+export default function ModelPicker({ cap, onChange, onError }) {
   const [list, setList] = useState(null),
     [value, setValue] = useState(""),
     [busy, setBusy] = useState(false);
@@ -55,13 +55,14 @@ export default function ModelPicker({ cap, onChange }) {
     setValue(model);
     setBusy(true);
     try {
-      if (cap.connection_source === "browser") {
-        // Hosted: the connection lives in this browser; only its model changes.
+      if (["browser", "site"].includes(cap.connection_source)) {
+        // Hosted: the connection lives in this browser (or is the site's own, which it
+        // starts on with nothing saved); only its model changes.
         const saved = savedConnection(MODEL_CONNECTION);
         saveConnection(
           MODEL_CONNECTION,
-          { ...saved, model },
-          rememberedConnection(MODEL_CONNECTION),
+          { provider: cap.provider, ...saved, model },
+          !saved || rememberedConnection(MODEL_CONNECTION),
         );
       } else {
         await api("/integrations/model/choice", {
@@ -70,8 +71,9 @@ export default function ModelPicker({ cap, onChange }) {
         });
       }
       await onChange?.();
-    } catch {
+    } catch (err) {
       setValue(previous);
+      onError?.(err);
     } finally {
       setBusy(false);
     }

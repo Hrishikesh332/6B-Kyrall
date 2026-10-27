@@ -13,14 +13,13 @@ import shutil
 import time
 from typing import Literal
 from pydantic import Field
-from .config import MODEL_PROVIDERS, PROVIDERS
+from .config import CLAUDE_MODELS as OFFERED_CLAUDE_MODELS, MODEL_PROVIDERS, OPENAI_MODELS as OFFERED_OPENAI_MODELS, PROVIDERS
 from .models import StrictModel
 from .provider import ProviderError
 
 NAMES = {'claude':'Claude Code', 'openai':'OpenAI API', 'workshop':'Local workshop'}
-# CLI aliases always resolve to the newest model of each family for the signed-in account.
-CLAUDE_MODELS = [{'id':'', 'name':'Account default'}, {'id':'opus', 'name':'Opus (latest)'},
-                 {'id':'sonnet', 'name':'Sonnet (latest)'}, {'id':'haiku', 'name':'Haiku (latest)'}]
+CLAUDE_MODELS = [dict(m) for m in OFFERED_CLAUDE_MODELS]
+OPENAI_MODELS = [dict(m) for m in OFFERED_OPENAI_MODELS]
 
 
 class ConnectionInput(StrictModel):
@@ -39,6 +38,14 @@ class ConnectionCheck(StrictModel):
     # Hosted 6B checks the browser's own key; it is used for this check only.
     model: str = Field(default='', max_length=120, pattern=r'^[A-Za-z0-9._:\-\[\]/]*$')
     api_key: str = Field(default='', max_length=300)
+
+
+def offered(provider, model):
+    """Refuse any model outside the ones 6B offers for this provider."""
+    if provider=='claude' and model not in {m['id'] for m in CLAUDE_MODELS}:
+        raise ValueError('Choose Opus 5.5 or Sonnet 5.5')
+    if provider=='openai' and model not in {m['id'] for m in OPENAI_MODELS}:
+        raise ValueError('Choose GPT-6 Astra, GPT-6.1 Sol or GPT-6.1 Terra')
 
 
 class ConnectionStore:
@@ -62,9 +69,10 @@ class Connections:
     def __init__(self, settings):
         self.settings, self.store = settings, ConnectionStore(settings.data_dir)
         # Values from backend/.env stay the fallback for anything not chosen in the app.
-        self.listed = {}
         self.defaults = {'provider':settings.provider, 'model':settings.model,
                          'claude_model':settings.claude_model, 'anthropic_api_key':settings.anthropic_api_key}
+        # Hosted: the deployment's own OPENAI_API_KEY runs OpenAI chats in place of a ChatGPT sign-in.
+        self.site_key = settings.hosted and bool(settings.api_key)
         # Hosted 6B never uses a connection saved on the server: each browser brings its own.
         if not settings.hosted: self.apply(self.store.load())
 
@@ -78,24 +86,14 @@ class Connections:
         s.anthropic_api_key = d['anthropic_api_key'] or saved.get('anthropic_api_key', '')
 
     def claude_models(self):
-        """Claude Code's own list for this account, kept 10 minutes; the CLI aliases when it cannot answer."""
-        s = self.settings
-        # Hosted lists carry no key (GET requests never send it), so they could not reflect the account.
-        if s.hosted: return CLAUDE_MODELS
-        hit = self.listed.get(bool(s.anthropic_api_key))
-        if hit and time.time()-hit[0] < 600: return hit[1]
-        from .claude_code import available_models
-        try: models = asyncio.run(available_models(s))
-        except Exception: return CLAUDE_MODELS
-        if not models: return CLAUDE_MODELS
-        self.listed[bool(s.anthropic_api_key)] = (time.time(), models)
-        return models
+        """The Claude models 6B offers: Opus 5.5 and Sonnet 5.5, whatever else the account could use."""
+        return [dict(m) for m in CLAUDE_MODELS]
 
     def choose(self, model):
         """Switch the active connection's model; the sign-in is unchanged, so no live check is needed."""
         s = self.settings
         if s.provider not in MODEL_PROVIDERS: raise ValueError('The local workshop has no model to choose')
-        if s.provider=='openai' and not model: raise ValueError('Choose an OpenAI model')
+        offered(s.provider, model)
         saved = self.store.load()
         saved.update(provider=s.provider, models={**saved.get('models',{}), s.provider:model}, changed_at=time.time())
         self.store.save(saved)
@@ -103,7 +101,7 @@ class Connections:
         return self.overview()
 
     def source(self):
-        if self.settings.hosted: return 'browser'
+        if self.settings.hosted: return 'site' if self.settings.site_key else 'browser'
         return 'workspace' if self.store.load().get('provider') in PROVIDERS else 'environment'
 
     def overview(self):
@@ -137,11 +135,19 @@ class Connections:
                         install='https://docs.claude.com/en/docs/claude-code/setup',
                         detail='Runs Claude Code with your Anthropic Console API key, kept in this browser.' if s.hosted else
                         'Uses the Claude account signed in to Claude Code on this computer (Pro, Max, Team or Enterprise), or an Anthropic Console API key.')
+        elif provider=='openai' and self.site_key:
+            # Visitors choose only the model; the key never leaves the server.
+            item.update(installed=True, site_key=True, model=s.model if s.site_key else self.defaults['model'],
+                        models=OPENAI_MODELS, api_key_set=True,
+                        detail='Runs on this site’s OpenAI API key: GPT-6 Astra, GPT-6.1 Sol or GPT-6.1 Terra.')
+        elif provider=='openai' and s.hosted:
+            # Without a site key, OpenAI models run only on the visitor's own ChatGPT plan, through its sign-in.
+            item.update(name='ChatGPT', installed=True, model=s.model if s.provider=='openai' else '', api_key_set=False,
+                        detail='Sign in with your ChatGPT plan to run GPT-6 Astra, GPT-6.1 Sol or GPT-6.1 Terra. No API key.')
         elif provider=='openai':
             item.update(installed=True, model=s.model if s.provider=='openai' else self.defaults['model'],
-                        api_key_set=bool(s.api_key),
-                        detail='Calls the OpenAI Responses API with your API key, kept in this browser.' if s.hosted else
-                        'Calls the OpenAI Responses API with OPENAI_API_KEY and 6B_MODEL from backend/.env.')
+                        models=OPENAI_MODELS, api_key_set=bool(s.api_key),
+                        detail='Calls the OpenAI Responses API with OPENAI_API_KEY and 6B_MODEL from backend/.env.')
         else:
             item.update(installed=True, detail='Built-in recipes for the marker organizer and mounting plate. No model or account.')
         return item
@@ -166,6 +172,7 @@ class Connections:
 
     def connect(self, data: ConnectionInput, busy):
         if busy: raise ValueError('Wait for the current run to finish before switching the model connection')
+        if data.provider=='openai': offered('openai', data.model)
         result = asyncio.run(self.check(data.provider, data.model, data.anthropic_api_key))
         if not result['ok']: raise ValueError(result['message'])
         saved = self.store.load()
@@ -174,13 +181,11 @@ class Connections:
         if data.anthropic_api_key: saved['anthropic_api_key'] = data.anthropic_api_key
         self.store.save(saved)
         self.apply(saved)
-        self.listed.clear()
         return {**self.overview(), 'check':result}
 
     def forget_claude_key(self):
         saved = self.store.load()
         saved.pop('anthropic_api_key', None)
         self.store.save(saved)
-        self.listed.clear()
         self.apply(saved)
         return self.overview()

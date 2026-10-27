@@ -104,7 +104,8 @@ function BambuSlice({ context }) {
 function BambuSliceRun({ context }) {
   const [result, setResult] = useState(null),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [opening, setOpening] = useState(false);
   const run = async () => {
     setBusy(true);
     setError("");
@@ -120,6 +121,9 @@ function BambuSliceRun({ context }) {
     }
   };
   const open = async () => {
+    if (opening) return;
+    setOpening(true);
+    setError("");
     try {
       await api(
         `/tasks/${context.taskId}/artifacts/${result.project_artifact_id}/open-in-bambu`,
@@ -127,6 +131,8 @@ function BambuSliceRun({ context }) {
       );
     } catch (err) {
       setError(err.message);
+    } finally {
+      setOpening(false);
     }
   };
   return (
@@ -179,8 +185,14 @@ function BambuSliceRun({ context }) {
             </p>
           )}
           {result.project_artifact_id && (
-            <button className="secondary" onClick={open}>
-              <ExternalLink size={13} /> Open in Bambu Studio
+            <button
+              className="secondary"
+              disabled={opening}
+              aria-busy={opening || undefined}
+              onClick={open}
+            >
+              <ExternalLink size={13} />{" "}
+              {opening ? "Opening…" : "Open in Bambu Studio"}
             </button>
           )}
         </>

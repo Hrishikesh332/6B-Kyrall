@@ -56,9 +56,6 @@ describe("workspace collections", () => {
       screen.getByRole("textbox", { name: "Search files" }),
       "notes",
     );
-    await user.click(
-      screen.getByRole("button", { name: "Search", exact: true }),
-    );
     await screen.findByRole("heading", { name: "No matching files" });
     expect(
       screen.getByRole("button", { name: "Models", exact: true }),

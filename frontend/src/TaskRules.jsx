@@ -21,9 +21,7 @@ const statusLabel = (set) =>
   ({
     always: "Always applies",
     applied:
-      set.decision?.decided_by === "user"
-        ? "Applied by you"
-        : "Applied by 6B",
+      set.decision?.decided_by === "user" ? "Applied by you" : "Applied by 6B",
     skipped:
       set.decision?.decided_by === "user" ? "Skipped by you" : "Not needed",
     pending: "Needs a decision",
@@ -31,7 +29,11 @@ const statusLabel = (set) =>
 
 // Which rule sets this task follows, why, and how the design meets each rule.
 export default function TaskRules({ task, notify }) {
-  const resource = useResource(`/tasks/${task.id}/rules`, task.last_event_id);
+  const resource = useResource(
+    `/tasks/${task.id}/rules`,
+    task.last_event_id,
+    true,
+  );
   const [open, setOpen] = useState(null),
     [busy, setBusy] = useState(false);
   const sets = (Array.isArray(resource.data) ? resource.data : []).filter(

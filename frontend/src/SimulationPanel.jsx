@@ -8,6 +8,8 @@ const sourceKinds = ["cad_source", "cad_script"];
 export default function SimulationPanel({ task, refresh, openArtifact }) {
   const [status, setStatus] = useState(null),
     [error, setError] = useState(null),
+    // Kept apart from the status poll, which would clear it within seconds.
+    [exportError, setExportError] = useState(null),
     [busy, setBusy] = useState(false);
   const [snapshot, setSnapshot] = useState(null),
     [capturing, setCapturing] = useState(false),
@@ -71,7 +73,7 @@ export default function SimulationPanel({ task, refresh, openArtifact }) {
   const selected = sources.find((a) => a.id === source) || sources[0];
   const exportScene = async () => {
     setExporting(true);
-    setError(null);
+    setExportError(null);
     try {
       const result = await api(`/tasks/${task.id}/simulation-export`, {
         method: "POST",
@@ -80,7 +82,7 @@ export default function SimulationPanel({ task, refresh, openArtifact }) {
       if (active.current) setExported(result);
       await refresh();
     } catch (e) {
-      if (active.current) setError(e);
+      if (active.current) setExportError(e);
     } finally {
       if (active.current) setExporting(false);
     }
@@ -106,7 +108,9 @@ export default function SimulationPanel({ task, refresh, openArtifact }) {
               <span className="status-dot" />
               {connection.label}
             </span>
-            {status?.container && <span className="tag">{status.container}</span>}
+            {status?.container && (
+              <span className="tag">{status.container}</span>
+            )}
             {state?.stop_applied && (
               <span className="badge failed">
                 <span className="status-dot" />
@@ -115,7 +119,8 @@ export default function SimulationPanel({ task, refresh, openArtifact }) {
             )}
             {status?.observed_at && (
               <small className="muted">
-                Observed {new Date(status.observed_at * 1000).toLocaleTimeString()}
+                Observed{" "}
+                {new Date(status.observed_at * 1000).toLocaleTimeString()}
               </small>
             )}
           </div>
@@ -131,11 +136,13 @@ export default function SimulationPanel({ task, refresh, openArtifact }) {
         </button>
       </header>
       {error && <ErrorNotice error={error} />}
+      {exportError && <ErrorNotice error={exportError} />}
       {!status && busy ? (
         <Loading>Reading your Brev simulation…</Loading>
       ) : !state ? (
         <p className="simulation-empty muted">
           {status?.error ||
+            status?.scope ||
             "Set the Isaac SSH host, container, Python path and MCP script to observe a scene."}
         </p>
       ) : (

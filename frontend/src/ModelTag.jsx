@@ -1,17 +1,7 @@
+import { modelLabel } from "./lib.js";
 import ProviderLogo from "./ProviderLogo.jsx";
 
-// "claude-opus-5-5" -> "Opus 5.5", "claude-sonnet-4-5-20250929" -> "Sonnet 4.5", "gpt-5.1" -> "GPT-5.1".
-export function modelLabel(id) {
-  if (!id) return "";
-  if (id.startsWith("claude-")) {
-    const [family, ...version] = id
-      .slice(7)
-      .split("-")
-      .filter((part) => !/^\d{8}$/.test(part));
-    return `${family[0].toUpperCase()}${family.slice(1)} ${version.join(".")}`.trim();
-  }
-  return id.replace(/^gpt/i, "GPT");
-}
+export { modelLabel };
 
 export const modelMaker = (id) =>
   id?.startsWith("claude")
@@ -35,7 +25,9 @@ export default function ModelTag({ runs }) {
     <span
       className="model-tag"
       title={
-        used.length > 1 ? `Models used in this chat: ${all}` : `${company} ${all}`
+        used.length > 1
+          ? `Models used in this chat: ${all}`
+          : `${company} ${all}`
       }
     >
       <ProviderLogo provider={maker} size={11} />

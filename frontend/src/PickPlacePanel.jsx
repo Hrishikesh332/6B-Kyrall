@@ -94,7 +94,12 @@ export default function PickPlacePanel({ task }) {
     );
   return (
     <PickPlace
-      key={data.mesh.parts.map((p) => p.name).join()}
+      // A rebuild with the same parts brings new motion studies; start again
+      // from them rather than keep ids from the previous build.
+      key={[
+        ...data.mesh.parts.map((p) => p.name),
+        ...data.studies.map((s) => s.id),
+      ].join()}
       mesh={data.mesh}
       studies={data.studies}
       reports={data.reports}

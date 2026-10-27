@@ -6,13 +6,13 @@ task, until that task has no queued or running work. It is never written to SQLi
 events, session files or logs, and a restart forgets it.
 """
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 import threading
 import time
 from urllib.parse import quote
 import httpx
-from .config import CONNECTION, PROVIDERS
+from .config import CONNECTION, OPENAI_MODELS, PROVIDERS
 
 PROVIDER_HEADER, MODEL_HEADER, KEY_HEADER = 'X-6B-Provider', 'X-6B-Model', 'X-6B-Key'
 MODEL_PATTERN = re.compile(r'^[A-Za-z0-9._:\-\[\]/]{0,120}$')
@@ -24,10 +24,12 @@ class Connection:
     provider: str
     model: str = ''
     key: str = ''
+    # The key is the deployment's own OPENAI_API_KEY, never sent by or to a browser.
+    site: bool = False
 
     def __repr__(self):
         # Never let a key reach a log line or traceback through repr().
-        return f'Connection(provider={self.provider!r}, model={self.model!r}, key={"set" if self.key else "none"})'
+        return f'Connection(provider={self.provider!r}, model={self.model!r}, key={"set" if self.key else "none"}, site={self.site!r})'
 
     def fields(self, with_key=True):
         key = self.key if with_key else ''
@@ -36,21 +38,25 @@ class Connection:
         if self.provider in ('openai', 'chatgpt'):
             # "chatgpt" is the OpenAI Responses API paid by the user's ChatGPT plan (OAuth token as key).
             return {'provider':'openai', 'model':self.model, 'api_key':key, 'claude_model':'', 'anthropic_api_key':'',
-                    'openai_plan':self.provider == 'chatgpt'}
+                    'openai_plan':self.provider == 'chatgpt', 'site_key':self.site}
         return {'provider':'workshop', 'model':'', 'api_key':'', 'claude_model':'', 'anthropic_api_key':'', 'openai_plan':False}
 
 
 WORKSHOP = Connection('workshop')
 
 
-def from_headers(headers, with_key=False):
-    """The browser's connection, or the workshop when it sends none."""
+def from_headers(headers, with_key=False, site=WORKSHOP):
+    """The browser's connection; when it sends none, the deployment's own (`site`) or the workshop."""
     provider = headers.get(PROVIDER_HEADER, '').strip()
-    if not provider: return WORKSHOP
+    if not provider: return replace(site, key=site.key if with_key else '')
     if provider not in (*PROVIDERS, 'chatgpt'): raise ValueError('Unknown model provider')
     if provider == 'workshop': return WORKSHOP
     model = headers.get(MODEL_HEADER, '').strip()
     if not MODEL_PATTERN.fullmatch(model): raise ValueError('Invalid model name')
+    if provider == 'openai' and site.site:
+        # The deployment's OpenAI API key runs every OpenAI chat; the browser picks only an offered model.
+        offered = any(m['id'] == model for m in OPENAI_MODELS)
+        return replace(site, model=model if offered else site.model, key=site.key if with_key else '')
     if provider == 'chatgpt':
         # The token stays on the server; the caller resolves it from the browser's sign-in cookie.
         if with_key and not model: raise ValueError('Choose a ChatGPT model in Integrations, then try again.')

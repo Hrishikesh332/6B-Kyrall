@@ -20,6 +20,7 @@ import uuid
 from cryptography.fernet import Fernet, InvalidToken
 import httpx
 import jwt
+from .config import OPENAI_MODELS
 
 ISSUER = 'https://auth.openai.com'
 DISCOVERY = ISSUER+'/.well-known/openid-configuration'
@@ -36,6 +37,10 @@ HOSTED_CALLBACK = '/api/integrations/chatgpt/callback'
 USAGE_URL = 'https://chatgpt.com/settings/usage'
 # Refresh well before the one-hour access token runs out, so a long run keeps a valid token.
 REFRESH_MARGIN = 50*60
+
+
+def _model_key(name):
+    return ''.join(c for c in str(name).lower() if c.isalnum() or c == '.')
 
 
 log = logging.getLogger(__name__)
@@ -76,7 +81,7 @@ class ChatGPT:
             return 'Sign in with ChatGPT is available on hosted 6B (6B_HOSTED=1).'
         if self.redirect_uri(host_url): return None
         return ('Sign in with ChatGPT needs OpenAI’s approval for this website. The site owner can apply through '
-                'OpenAI’s interest form, then set 6B_CHATGPT_CLIENT_ID. Until then, use an OpenAI API key.')
+                'OpenAI’s interest form, then set 6B_CHATGPT_CLIENT_ID. Until then, ChatGPT cannot be connected here.')
 
     def host_id(self):
         """Stable, opaque ext_agent_host_id for this deployment (OpenAI requires one per host)."""
@@ -247,8 +252,13 @@ class ChatGPT:
         with httpx.Client(transport=self.transport, timeout=20, trust_env=False) as client:
             response = client.get(RESOURCE+'/models', headers={'Authorization':'Bearer '+record['access_token']})
         if response.is_error: raise ChatGPTError(f'ChatGPT returned HTTP {response.status_code} for the model list.')
-        return [{'id':m['slug'], 'name':m.get('display_name') or m['slug']}
-                for m in response.json().get('models', []) if m.get('visibility', 'list') == 'list' and m.get('slug')]
+        listed = {}
+        for m in response.json().get('models', []):
+            if m.get('visibility', 'list') != 'list' or not m.get('slug'): continue
+            for name in (m['slug'], m.get('display_name')):
+                listed.setdefault(_model_key(name), m['slug'])
+        # Only the OpenAI models 6B offers, in its order, matched by name ("GPT-6.1 Terra" ~ "gpt-6.1-terra").
+        return [{'id':listed[_model_key(m['name'])], 'name':m['name']} for m in OPENAI_MODELS if _model_key(m['name']) in listed]
 
     def sign_out(self, cookie):
         record = self.load(cookie)

@@ -96,7 +96,9 @@ function ToolDetails({ taskId, call, openArtifact }) {
           <pre>{JSON.stringify(data.arguments, null, 2)}</pre>
           <h4>Result</h4>
           <pre>
-            {JSON.stringify(result, null, 2) || "Waiting for tool result…"}
+            {result == null
+              ? "Waiting for tool result…"
+              : JSON.stringify(result, null, 2)}
           </pre>
         </div>
       </details>
@@ -325,7 +327,8 @@ export function EvidenceContent({
           <div>
             <h2>Tool activity</h2>
             <p className="evidence-meta">
-              {tools.length} calls · Most recent first
+              {tools.length} {tools.length === 1 ? "call" : "calls"} · Most
+              recent first
             </p>
           </div>
           <select

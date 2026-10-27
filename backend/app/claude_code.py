@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import time
 from .agent_context import compact_result, task_context
+from .config import CLAUDE_EFFORT
 from .db import encode, uid
 from .provider import ProviderError
 from .tools import review_image, tool_definitions, unresolved_error
@@ -97,22 +98,6 @@ def default_client(options):
     return ClaudeSDKClient(options)
 
 
-async def available_models(settings, client_factory=default_client):
-    """Models the signed-in account can use, from Claude Code's startup handshake; spends no tokens."""
-    from claude_agent_sdk import ClaudeAgentOptions
-    client = client_factory(ClaudeAgentOptions(tools=[], setting_sources=[], plugins=[],
-                                               cli_path=find_claude(settings.claude_binary), env=claude_env(settings)))
-    try:
-        await asyncio.wait_for(client.connect(), 30)
-        info = await client.get_server_info() or {}
-    except asyncio.TimeoutError: raise ProviderError('Claude Code did not list its models') from None
-    finally: await client.disconnect()
-    # "default" is the account default, which 6B saves as no model at all.
-    return [{'id':'', 'name':'Account default', 'description':m.get('description') or ''} if m['value']=='default' else
-            {'id':m['value'], 'name':m.get('displayName') or m['value'],
-             'description':m.get('description') or ''} for m in info.get('models', []) if m.get('value')]
-
-
 def count_usage(state, counted, message):
     """Add one API response's usage once.
 
@@ -195,7 +180,8 @@ async def run_claude(engine, run, client_factory=default_client):
         env=claude_env(settings), max_turns=settings.max_tool_calls+10,
         # Build results carry the six-view review render inline; the SDK's 1 MB default is too small.
         max_buffer_size=32*1024*1024,
-        effort=settings.reasoning_effort if settings.reasoning_effort in ('low','medium','high','xhigh','max') else None)
+        # Every offered Claude model runs at xhigh, whatever 6B_REASONING_EFFORT asks of OpenAI models.
+        effort=CLAUDE_EFFORT)
     client=client_factory(options)
     queue=asyncio.Queue()
 
@@ -214,7 +200,7 @@ async def run_claude(engine, run, client_factory=default_client):
         prompt='Execute the current task using this saved application context:\n'+task_context(engine,run)
         log.write('sent',{'prompt':prompt})
         await client.query(prompt)
-        model=settings.claude_model or 'Claude Code default'
+        model=settings.claude_model
         final_text=''
         steering,steers=False,0
         while time.monotonic()<deadline:

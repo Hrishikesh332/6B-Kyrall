@@ -21,7 +21,10 @@ import {
 import { api, deliveredArtifacts, latestArtifacts } from "./lib.js";
 import { renderText } from "../format.js";
 import { useResource, useTask } from "./hooks.js";
-import PhotoAttachments, { maxPhotos, photoTypes } from "./PhotoAttachments.jsx";
+import PhotoAttachments, {
+  maxPhotos,
+  photoTypes,
+} from "./PhotoAttachments.jsx";
 import SimulationPanel from "./SimulationPanel.jsx";
 import PickPlacePanel from "./PickPlacePanel.jsx";
 import { EvidenceContent } from "./EvidencePanel.jsx";
@@ -64,13 +67,30 @@ export default function TaskPage({
   const [tab, setTab] = useState("conversation"),
     [busy, setBusy] = useState(false),
     [photos, setPhotos] = useState([]),
-    [dragging, setDragging] = useState(false);
+    [dragging, setDragging] = useState(false),
+    [exporting, setExporting] = useState(false);
   const uploadInput = useRef(null),
     end = useRef(null),
     priorCount = useRef(0);
+  // Follow new messages only while the end of the conversation is in view, so reading
+  // earlier messages is not interrupted by each new one.
+  const following = useRef(true);
+  useEffect(() => {
+    const track = () => {
+      if (end.current)
+        following.current =
+          end.current.getBoundingClientRect().top <= window.innerHeight + 120;
+    };
+    document.addEventListener("scroll", track, {
+      capture: true,
+      passive: true,
+    });
+    return () =>
+      document.removeEventListener("scroll", track, { capture: true });
+  }, []);
   useEffect(() => {
     if (task?.messages.length !== priorCount.current) {
-      if (priorCount.current && end.current)
+      if (priorCount.current && end.current && following.current)
         end.current.scrollIntoView({ block: "nearest" });
       priorCount.current = task?.messages.length || 0;
     }
@@ -82,7 +102,7 @@ export default function TaskPage({
       await operation();
       await refresh();
     } catch (err) {
-      notify(err.message);
+      notify(err.message, "error");
     } finally {
       setBusy(false);
     }
@@ -93,7 +113,7 @@ export default function TaskPage({
         {error ? (
           <ErrorNotice error={error} retry={refresh} />
         ) : (
-          <Loading>Loading project…</Loading>
+          <Loading>Loading chat…</Loading>
         )}
       </div>
     );
@@ -165,7 +185,7 @@ export default function TaskPage({
     <div className="task-page page">
       <div className="task-heading">
         <a className="task-back" href="#tasks">
-          <ArrowLeft size={14} /> All projects
+          <ArrowLeft size={14} /> All chats
         </a>
         <div className="task-heading-content">
           <div className="task-heading-copy">
@@ -173,7 +193,7 @@ export default function TaskPage({
               <h1>{task.title}</h1>
               <button
                 className="icon-button"
-                aria-label="Rename project"
+                aria-label="Rename chat"
                 onClick={() => setModal({ kind: "rename", task, refresh })}
               >
                 <Pencil size={16} />
@@ -181,16 +201,22 @@ export default function TaskPage({
             </div>
             <div className="task-meta">
               <Badge status={task.status} />
-              <span>{artifacts.length} deliverables</span>
+              <span>
+                {artifacts.length}{" "}
+                {artifacts.length === 1 ? "deliverable" : "deliverables"}
+              </span>
               <ModelTag runs={task.runs} />
-              <ApprovalPolicy task={task} refresh={refresh} />
+              <ApprovalPolicy task={task} refresh={refresh} notify={notify} />
             </div>
           </div>
           <div className="task-controls">
             <button
               className="secondary"
               title="Download the full record of this chat: messages, decisions, rules, tool calls and files"
+              disabled={exporting}
+              aria-busy={exporting || undefined}
               onClick={async () => {
+                setExporting(true);
                 try {
                   const blob = await (
                     await api(`/tasks/${id}/session?format=md`, { raw: true })
@@ -202,11 +228,14 @@ export default function TaskPage({
                   link.click();
                   setTimeout(() => URL.revokeObjectURL(url), 1000);
                 } catch (err) {
-                  notify(err.message);
+                  notify(err.message, "error");
+                } finally {
+                  setExporting(false);
                 }
               }}
             >
-              <Download size={15} /> Export session
+              <Download size={15} />{" "}
+              {exporting ? "Exporting…" : "Export session"}
             </button>
             {active && (
               <button
@@ -264,7 +293,7 @@ export default function TaskPage({
       <div
         className="tabs"
         role="tablist"
-        aria-label="Project views"
+        aria-label="Chat views"
         onKeyDown={(e) => {
           if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key))
             return;
@@ -440,7 +469,9 @@ export default function TaskPage({
             >
               <Composer
                 cap={cap}
+                onConnectModel={() => setModal({ kind: "model" })}
                 onSubmit={send}
+                onRefused={notify}
                 contextScope={task.context_scope}
                 disabled={task.status === "awaiting_input"}
                 onUpload={() => uploadInput.current.click()}
