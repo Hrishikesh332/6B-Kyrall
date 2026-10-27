@@ -907,7 +907,7 @@ def create_app(settings=None,provider=None,firebase=None):
     def delete_rule(rule_id:str):
         admin_only('workspace rules')
         with db.transaction() as c: c.execute('DELETE FROM rules WHERE id=?',(rule_id,))
-        cloud.push_rules(account())
+        cloud.push_rules(account(),deleted=[rule_id])
         return {'deleted':True}
 
     if settings.frontend_dir.is_dir():

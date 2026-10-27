@@ -18,6 +18,7 @@ the exact SQLite row as JSON text (exact()), so a restored chat is identical to 
   users/{uid}/logs/{task_id}/{run_id}        a run's raw provider log (sessions/), in pieces like a file
   users/{uid}/logged/{task_id}/{run_id}      its pieces, size and sha256, written once they all are
   users/{uid}/rules/{id}                     the workspace rules, as the account that may edit them left them
+  users/{uid}/rules_deleted/{id}             when a rule was deleted; every server drops it and never sends it back
 Chats copied before format 2 hold readable rows instead (long text cut); they still restore, as before.
 Chats made while nobody is signed in go under workspace/ in the same shape. Times are Unix
 seconds; synced_at is the database server's clock in milliseconds.
@@ -259,8 +260,6 @@ class CloudSync:
         self.files = self.data_dir / 'artifacts' if self.data_dir else None
         self.logs = self.data_dir / 'sessions' if self.data_dir else None
         self.pool = ThreadPoolExecutor(1, thread_name_prefix='6b-cloud') if root is not None else None
-        # Rule copies loaded back in this process: only these are safe to overwrite with ours.
-        self.rules_loaded = set()
         self.columns = {}
 
     def _submit(self, fn, *args):
@@ -277,9 +276,10 @@ class CloudSync:
     def save_user(self, user):
         return self._submit(self._save_user, user)
 
-    def push_rules(self, owner):
-        """Replace the account's copy of the workspace rules with this server's."""
-        return self._submit(self._push_rules, owner)
+    def push_rules(self, owner, deleted=()):
+        """Replace the account's copy of the workspace rules with this server's. Deleted rules are
+        remembered in the copy (rules_deleted/), so no other server brings them back."""
+        return self._submit(self._push_rules, owner, tuple(deleted))
 
     def restore(self, owner, rules=False):
         """Load back the account's chats missing here, and its rules when it may edit them."""
@@ -418,10 +418,17 @@ class CloudSync:
             return False
         return True
 
-    def _push_rules(self, owner):
+    def _push_rules(self, owner, deleted=()):
         base = base_path(owner)
+        try:
+            if deleted:
+                self.root.update({f'{base}/rules_deleted/{key(r)}': time.time() for r in deleted})
+        except Exception as exc:  # noqa: BLE001 - the copy keeps the rule until the next delete or sign-in
+            log.warning('Cloud copy of the rules for %s failed: %s', base, exc)
+            return False
         # Never replace a copy this server has not read: a fresh server would wipe it with nothing.
-        if base not in self.rules_loaded and not self._restore_rules(base):
+        # Reading it first also drops the rules other servers deleted since.
+        if not self._restore_rules(base):
             return False
         rules = self.db.all(f"SELECT {','.join(RULE_COLUMNS)} FROM rules ORDER BY created_at")
         try:
@@ -672,19 +679,29 @@ class CloudSync:
     def _restore_rules(self, base):
         try:
             rules = restored(self.root.child(f'{base}/rules').get() or {})
+            deleted = {unkey(k) for k in (self.root.child(f'{base}/rules_deleted').get(shallow=True) or {})}
         except Exception as exc:  # noqa: BLE001 - logged; the rules stay as they are here
             log.warning('Could not read the cloud copy of the rules for %s: %s', base, exc)
             return False
+        added = removed = 0
         with self.db.transaction() as c:
-            for r in rules.values():
-                project = r.get('project_id')
+            for rule_id in deleted:
+                removed += c.execute('DELETE FROM rules WHERE id=?', (rule_id,)).rowcount
+            # The same rule under another id (a template applied on two servers) is not added twice;
+            # compared as text, since the stored JSON may escape characters differently.
+            here = {(json.loads(text), rule_set, project) for text, rule_set, project in c.execute('SELECT content,rule_set,project_id FROM rules')}
+            for r in values(rules):
+                project, content, rule_set = r.get('project_id'), as_json(r.get('content'), ''), r.get('rule_set') or ''
                 # A project rule whose project is not here would otherwise apply everywhere.
-                if project and not c.execute('SELECT 1 FROM projects WHERE id=?', (project,)).fetchone():
+                if r.get('id') in deleted or (project and not c.execute('SELECT 1 FROM projects WHERE id=?', (project,)).fetchone()):
                     continue
-                c.execute(f"INSERT OR IGNORE INTO rules({','.join(RULE_COLUMNS)}) VALUES(?,?,?,?,?,?,?,?,?)",
-                          (r['id'], as_json(r.get('content'), ''), project, int(r.get('enabled', 1)), r.get('created_at') or time.time(),
-                           r.get('rule_set') or '', r.get('applies_when') or '', r.get('level') or 'must', r.get('source') or ''))
-        self.rules_loaded.add(base)
+                if c.execute('SELECT 1 FROM rules WHERE id=?', (r['id'],)).fetchone() or (json.loads(content), rule_set, project) in here:
+                    continue
+                added += c.execute(f"INSERT OR IGNORE INTO rules({','.join(RULE_COLUMNS)}) VALUES(?,?,?,?,?,?,?,?,?)",
+                                   (r['id'], content, project, int(r.get('enabled', 1)), r.get('created_at') or time.time(),
+                                    rule_set, r.get('applies_when') or '', r.get('level') or 'must', r.get('source') or '')).rowcount
+        if added or removed:
+            log.info('Rules from the cloud copy of %s: %d added, %d removed', base, added, removed)
         return True
 
     def close(self, wait=True):

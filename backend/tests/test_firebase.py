@@ -7,6 +7,7 @@ from app.config import Settings
 from app.firebase import SESSION_COOKIE, CloudSync, Firebase, SignInError, document, key, service_account
 from app.main import create_app
 from app.models import TaskCreate
+from app.rules import TEMPLATES, add_template
 
 ACCOUNTS = {'cookie-a': {'uid': 'a', 'email': 'a@example.com', 'email_verified': True, 'name': 'Ada', 'picture': ''},
             'cookie-b': {'uid': 'b', 'email': 'b@example.com', 'email_verified': True, 'name': 'Bo', 'picture': ''},
@@ -494,3 +495,41 @@ def test_a_chat_with_a_run_going_here_is_never_touched_by_a_restore(tmp_path):
     app.state.cloud.close()
     assert app.state.db.require_task(task)['title'] == 'Keep going'
     assert app.state.db.one('SELECT status FROM runs WHERE task_id=?', (task,))['status'] == 'running'
+
+
+def test_a_rule_deleted_on_one_server_is_deleted_on_the_others(tmp_path):
+    database = FakeDatabase()
+    first = signed_in_app(tmp_path / 'first', database=database, owner_email='a@example.com')
+    ada = _signed_in(first, 'a')
+    keep = ada.post('/api/rules', json={'content': 'Walls at least 1.2 mm'}).json
+    gone = ada.post('/api/rules', json={'content': 'Forget me everywhere'}).json
+    first.state.cloud.pool.submit(lambda: None).result()
+    other = signed_in_app(tmp_path / 'other', database=database, owner_email='a@example.com')
+    other.state.cloud.pool.submit(lambda: None).result()
+    assert {r['id'] for r in other.state.db.all('SELECT id FROM rules')} == {keep['id'], gone['id']}
+
+    ada.delete(f"/api/rules/{gone['id']}")
+    first.state.cloud.close()
+    # The other server held the rule; on its next sign-in it drops it, and its push does not bring it back.
+    _signed_in(other, 'a')
+    other.state.cloud.close()
+    assert [r['id'] for r in other.state.db.all('SELECT id FROM rules')] == [keep['id']]
+    assert list(database.data['users']['a']['rules']) == [keep['id']]
+
+
+def test_the_same_rules_applied_on_two_servers_are_not_doubled(tmp_path):
+    database = FakeDatabase()
+    first = signed_in_app(tmp_path / 'first', database=database, owner_email='a@example.com')
+    other = signed_in_app(tmp_path / 'other', database=database, owner_email='a@example.com')
+    for server in (first, other):  # the same template, applied on each before either saw the other's
+        add_template(server.state.db, next(iter(TEMPLATES)))
+    # One server's JSON escapes characters the other's keeps as they are; the text is the same.
+    with other.state.db.transaction() as c:
+        c.execute("UPDATE rules SET content=? WHERE id=(SELECT id FROM rules ORDER BY created_at LIMIT 1)", (json.dumps('Walls ≥ 1.2 mm'),))
+    with first.state.db.transaction() as c:
+        c.execute("UPDATE rules SET content=? WHERE id=(SELECT id FROM rules ORDER BY created_at LIMIT 1)", (json.dumps('Walls ≥ 1.2 mm', ensure_ascii=False),))
+    first.state.cloud.push_rules('a').result()
+    count = len(first.state.db.all('SELECT id FROM rules'))
+    other.state.cloud.push_rules('a').result()
+    first.state.cloud.close(); other.state.cloud.close()
+    assert len(other.state.db.all('SELECT id FROM rules')) == count
