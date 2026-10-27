@@ -44,7 +44,7 @@ class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("6B_DATA_DIR", "./data")).resolve())
     provider: str = field(default_factory=lambda: os.getenv("6B_PROVIDER", "workshop"))
     model: str = field(default_factory=lambda: os.getenv("6B_MODEL", ""))
-    api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_KEY", ""))
     claude_binary: str = field(default_factory=lambda: os.getenv("6B_CLAUDE_BINARY", ""))
     claude_model: str = field(default_factory=lambda: os.getenv("6B_CLAUDE_MODEL", ""))
     claude_timeout: int = field(default_factory=lambda: int(os.getenv("6B_CLAUDE_TIMEOUT", "600")))

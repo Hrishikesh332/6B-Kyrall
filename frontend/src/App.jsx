@@ -13,7 +13,6 @@ import {
   Cpu,
   Files,
   Plus,
-  Plug,
   ShieldCheck,
   ScrollText,
   ExternalLink,
@@ -52,6 +51,7 @@ import ArtifactPreview from "./ArtifactPreview.jsx";
 import ProjectPage from "./ProjectPage.jsx";
 import SignIn, { GoogleMark } from "./SignIn.jsx";
 import { authConfig, signInWithGoogle, signOut } from "./auth.js";
+import "./home.css";
 
 const navigation = [
   ["new", "New chat", Plus],
@@ -809,124 +809,70 @@ export function Home({
   };
   return (
     <div className="home page">
-      <section className="start-workspace" aria-labelledby="start-heading">
-        <div className="workspace-kicker">
-          <span />
-          DESIGN WORKSPACE
-        </div>
+      <section className="home-hero" aria-labelledby="start-heading">
         <h1 id="start-heading">What will you create?</h1>
-        <p>Describe the part, assembly, or change you have in mind.</p>
-        <div className="start-grid">
-          <div className="design-brief">
-            <Composer
-              initial
-              projects={projects}
-              cap={cap}
-              onModelChange={refreshCap}
-              onConnectModel={() => setModal({ kind: "model" })}
-              onSubmit={createTask}
-              onRefused={notify}
-              projectId={projectId}
-              draft={draft}
-              onDraftUsed={clearDraft}
-            />
-            <p className="brief-hint">
-              <span>Be specific about dimensions and materials.</span>
-              <span>
-                Enter to send <span aria-hidden="true">↵</span>
-              </span>
-            </p>
-          </div>
-          <div className="design-starters" aria-label="Example projects">
-            <h2>Try an idea</h2>
-            {samples.map((sample, index) => (
-              <button
-                key={sample.id}
-                onClick={() => {
-                  setDraft(sample.prompt);
-                  focusComposer();
-                }}
-                aria-label={sample.title}
-              >
-                <span className="starter-number">0{index + 1}</span>
-                <span className="starter-copy">
-                  <strong>
-                    {sample.id === "markers"
-                      ? "Wall organizer"
-                      : "Mounting plate"}
-                  </strong>
-                  <small>
-                    {sample.id === "markers"
-                      ? "A printable assembly"
-                      : "A parametric part"}
-                  </small>
-                </span>
-                <ArrowRight size={16} />
-              </button>
-            ))}
-          </div>
+        <Composer
+          initial
+          projects={projects}
+          cap={cap}
+          onModelChange={refreshCap}
+          onConnectModel={() => setModal({ kind: "model" })}
+          onSubmit={createTask}
+          onRefused={notify}
+          projectId={projectId}
+          draft={draft}
+          onDraftUsed={clearDraft}
+          placeholder="Describe a part, assembly, or change, with dimensions and materials…"
+        />
+        <div className="home-chips" aria-label="Ways to start">
+          {samples.map((sample) => (
+            <button
+              key={sample.id}
+              onClick={() => {
+                setDraft(sample.prompt);
+                focusComposer();
+              }}
+              aria-label={sample.title}
+            >
+              <Box size={14} strokeWidth={1.7} />
+              {sample.id === "markers" ? "Wall organizer" : "Mounting plate"}
+            </button>
+          ))}
+          <button
+            onClick={() =>
+              setModal(
+                onshapeConnected
+                  ? { kind: "onshape", view: "browse" }
+                  : { kind: "onshape" },
+              )
+            }
+          >
+            <span aria-hidden="true">
+              <ProviderLogo provider="onshape" size={16} />
+            </span>
+            {onshapeConnected ? "Import from Onshape" : "Connect Onshape"}
+          </button>
         </div>
-        <button
-          className="home-connection"
-          onClick={() =>
-            setModal(
-              onshapeConnected
-                ? { kind: "onshape", view: "browse" }
-                : { kind: "onshape" },
-            )
-          }
-        >
-          <Plug size={15} />
-          <span>Working in Onshape?</span>
-          <strong>
-            {onshapeConnected ? "Import a design" : "Set up connection"}
-          </strong>
-          <ArrowRight size={14} />
-        </button>
       </section>
-      <section className="home-recents" aria-label="Recent projects">
-        <div className="section-heading">
-          <div>
-            <h2>Recent work</h2>
-            <p>Continue where you left off.</p>
+      {tasks.length > 0 && (
+        <section className="home-recents" aria-labelledby="recents-heading">
+          <div className="home-recents-heading">
+            <h2 id="recents-heading">Recent</h2>
+            <a href="#tasks">View all</a>
           </div>
-          <a className="text-button" href="#tasks">
-            View all
-            <ArrowRight size={15} />
-          </a>
-        </div>
-        {tasks.length ? (
-          <div className="recent-work-list">
-            {tasks.slice(0, 4).map((task) => (
-              <button
-                key={task.id}
-                className="recent-work-row"
-                onClick={() => openTask(task.id)}
-              >
-                <span className="recent-work-icon">
-                  <Box size={21} strokeWidth={1.5} />
-                </span>
-                <span className="recent-work-title">
-                  <strong>{task.title}</strong>
-                  <small>
-                    {task.context_scope === "isolated"
-                      ? "Personal project"
-                      : `${task.context_scope} context`}
-                  </small>
-                </span>
-                <time>{date(task.updated_at)}</time>
-                <Badge status={task.status} />
-                <ArrowRight size={16} />
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="home-empty">
-            <MessageSquare size={18} />
-            <span>Your recent designs will appear here.</span>
-          </div>
-        )}
-      </section>
+          {tasks.slice(0, 4).map((task) => (
+            <button
+              key={task.id}
+              className="home-recent"
+              onClick={() => openTask(task.id)}
+            >
+              <span className="home-recent-title">{task.title}</span>
+              <Badge status={task.status} />
+              <time>{date(task.updated_at)}</time>
+            </button>
+          ))}
+        </section>
+      )}
     </div>
   );
 }
