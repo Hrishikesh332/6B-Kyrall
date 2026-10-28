@@ -1,368 +1,171 @@
 # 6B backend
 
-A working local engineering workspace with Python Flask endpoints, reconstructed from observable product behavior.
-The source uses neutral branding throughout. Its prompts are independently authored;
-they are not extracted private prompts or recovered server code.
+The engine behind 6B: a Flask API that runs model-driven engineering sessions, compiles CAD on
+the OpenCascade kernel, checks every build, and keeps a versioned, hash-checked record of each
+file and decision.
 
-## Start
+<img src="../media/plan.jpg" alt="A plan for approval in a 6B chat, listing what changes, what stays fixed and the risks" width="860">
+
+## Run it
 
 From the repository root:
 
 ```sh
-./start.sh
+./install.sh   # .venv, Python packages, frontend build, backend/.env from .env.example
+./start.sh     # serves the API and the built UI on http://127.0.0.1:8765
 ```
 
-Open **http://127.0.0.1:8765**. API documentation is at **/docs**. The existing virtual
-environment has been installed and tested on this machine. For a fresh checkout:
+API reference is at **/docs**, OpenAPI at **/openapi.json**. Python 3.11+ is required (3.12 is
+tested). The CAD kernel makes the install much larger than a typical web app.
 
-```sh
-./install.sh
-./start.sh
-```
-
-Python 3.11+ is required; the tested interpreter is Python 3.12. Dependencies include
-the OpenCascade CAD kernel, so installation is substantially larger than a plain web app.
-
-## What works now
-
-- Persistent tasks, messages, plans, specifications, tool traces, and run states.
-- Background runs, durable event replay over SSE, cancellation, explicit retry,
-  worker leases, and follow-ups queued while a turn runs.
-- One-to-three-question forms with free-text answers, explicit defaults, and resume.
-- Project briefs and reference files, scoped memory retrieval, search, and archive.
-- Rules (`/api/rules`): short instructions for all projects or one project. Enabled rules
-  are sent to Claude Code and the direct API as binding requirements on every run.
-- Real parametric CAD: boxes, cylinders, spheres, polygon extrusions, Boolean
-  operations, fillets, chamfers, transforms, and assemblies of up to 12 parts.
-- STEP assembly, per-part STL, construction JSON, four SVG projections, interactive
-  mesh previews, numeric validation, assembly notes, and ZIP manifests.
-- Immutable artifact versions, SHA-256 integrity metadata, uploads, and downloads.
-- A configurable Responses API tool loop, bounded attempts and token accounting,
-  editable domain workflows, and a public-reference reader with explicit domain scope.
-- Interval schedules stored locally; new schedules start paused in the interface.
-- Targeted CAD revisions, Claude Code inspection of actual CAD/PDF pixels, and allowlisted
-  PDF extraction with source hashes and page numbers.
-- Named motion studies: sampled exact-solid intersections, measured surface gaps,
-  relative part motion, requirement evidence, operating-cycle review, and bench tests.
-
-The React browser interface lives in `../frontend/`. Vite builds it into
-`../frontend/dist/`, which this backend serves. `./install.sh` installs and builds
-the frontend, and `./start.sh` rebuilds it before launch. No CDN is required at runtime.
-
-## Execution modes
-
-### Connecting a model after deployment
-
-Each computer that runs 6B connects its own account; nothing is shared from the
-machine where 6B was built.
-
-1. Run `./install.sh` (it creates `backend/.env` from `.env.example` if needed).
-2. Sign in once on that computer with **Claude Code** (Claude Pro, Max, Team or
-   Enterprise account): `claude auth login`. The Claude Code CLI is bundled with the
-   Python packages, so a separate install is optional; `./install.sh` prints the full
-   command when `claude` is not on PATH. Instead of signing in you can paste an
-   Anthropic Console API key in the app, or set `ANTHROPIC_API_KEY` in `backend/.env`.
-3. Start 6B, open **Integrations → Model provider** (or **Workspace settings →
-   Change model connection**), select Claude Code, press **Check connection**
-   and then **Use …**.
-
-The app refuses the switch until the sign-in check passes, and waits for any running
-task to finish first. The choice is saved in `backend/data/integrations/model.json` (owner-only
-file permissions) and takes over from `6B_PROVIDER` on later starts. Without a saved
-choice the `.env` provider is used exactly as before. Saved API keys are never returned
-to the browser.
-
-API: `GET /api/integrations/model` lists providers and the active one,
-`POST /api/integrations/model/check` runs a read-only sign-in check (no tokens spent),
-`PUT /api/integrations/model` switches, and `DELETE /api/integrations/model/anthropic-key`
-removes a saved Anthropic key.
-
-**Claude Code mode** (`6B_PROVIDER=claude`) runs the same typed engineering tools
-through the [Claude Agent SDK](https://docs.claude.com/en/docs/agent-sdk/overview). The
-tools are served to Claude Code by an in-process MCP server; every built-in Claude Code
-tool (shell, files, web) is removed, and user settings, hooks, plugins, skills and
-other MCP servers are not loaded, so actions flow only through 6B's tools.
-Questions, approvals, completion checks, image review, token budgets and
-cancellation are supported. `6B_CLAUDE_MODEL` (or the app's model picker) accepts
-`opus`, `sonnet`, `haiku` or a full model ID; empty uses the account default. Backend
-secrets (OpenAI and Onshape keys, the local API token) are blanked in the Claude Code
-process environment. Task context and tool results are sent to Anthropic and use the
-signed-in account's plan limits, or Console billing with an API key. The adapter is
-covered by scripted protocol tests and a live check that the CLI starts with only the
-6B tools; a full CAD run with a signed-in Claude account has not yet been recorded.
-
-**Workshop mode** (`6B_PROVIDER=workshop`) needs no model account. It is an explicit deterministic
-demonstration, not general AI. The marker organizer supports counts of 1–8, barrel
-diameters of 5–30 mm, diametral clearances of 0.4–3 mm, wall-mount choices, and revisions.
-The mounting-plate example defaults to an 80 × 50 × 5 mm plate with four 4.5 mm holes;
-explicit `width × depth × thickness mm` and `diameter mm holes` values are supported. Unsupported
-requests return a clear limitation instead of fabricated artifacts.
-
-**Direct API mode** is an alternative for operators who want to use an API key:
-
-1. Copy `.env.example` to `.env`.
-2. Set `6B_PROVIDER=openai`, `OPENAI_API_KEY`, and `6B_MODEL` to `gpt-6-astra`,
-   `gpt-6.1-sol` or `gpt-6.1-terra`. Set a supported `6B_REASONING_EFFORT` or
-   leave it empty for models without that parameter.
-3. Restart the server.
-
-On a hosted deployment (`6B_HOSTED=1`), setting `OPENAI_API_KEY` connects every visitor to
-OpenAI through that key, on `gpt-6.1-terra` unless `6B_MODEL` names one of the other two.
-Visitors pick only the model; the key stays on the server, and every signed-in account's
-OpenAI chats are billed to it.
-
-With Google sign-in on, a hosted visitor can also save their Anthropic API key to their Google
-account (Integrations → Model provider → Claude Code → "Save to my Google account"). It is
-encrypted with `6B_ACCOUNT_KEY_SECRET` (or the Firebase service account's private key) and
-stored in the Realtime Database, never sent back to a browser, and any device they sign in on
-starts on it. A Claude Pro or Max subscription cannot be connected to a hosted site: Anthropic
-allows subscription sign-in only in its own apps, so hosted Claude runs on API keys.
-
-The direct Responses adapter was verified with controlled provider responses. In API mode, task content and tool results are
-sent to the configured provider; Responses storage is enabled for continuation via
-`previous_response_id`. API credentials are read from the server environment and
-excluded from CAD subprocess environments and client responses.
-
-Official integration references:
-[Responses function calling](https://developers.openai.com/api/docs/guides/function-calling)
-and [Responses conversation integration](https://developers.openai.com/api/docs/guides/migrate-to-responses).
-These establish the request/tool-output continuation contract used by the adapter.
-
-## Example
-
-Create a task with this prompt:
-
-> Design a wall-mounted organizer for six markers, each 18 mm in diameter. Export
-> STL, STEP, and assembly notes.
-
-Answer the three questions, then inspect the STEP card. Revise in the same task:
-
-> Revise the organizer for eight markers. Keep the same diameter. Keep the width below 210 mm.
-
-The second run preserves the answers and produces version 2 of the files. The ZIP
-contains only the selected revision and includes a checksum manifest.
-
-A completed, verified eight-marker package is included in
-[examples/marker_organizer_package.zip](examples/marker_organizer_package.zip).
-
-Rebuild a downloaded construction recipe directly:
+To run the API on its own:
 
 ```sh
 cd backend
-../.venv/bin/python -m app.cad_worker /absolute/path/model.cad.json /absolute/path/output
+../.venv/bin/python run.py
 ```
 
-## Verification
+## How a run works
+
+```mermaid
+flowchart LR
+  B[Browser] -- REST + SSE --> A[Flask API]
+  A -- queue --> W[Background worker]
+  W --> E[Engine]
+  E <--> M[Claude Code / OpenAI / Workshop]
+  E --> T[Tool runner]
+  T --> C[CAD sandbox<br>CadQuery + OpenCascade]
+  T --> R[References, Onshape,<br>Bambu, Isaac]
+  T --> S[(SQLite + versioned files)]
+  E --> K{Delivery checks}
+  K -- fail --> E
+  K -- pass --> A
+```
+
+1. A message queues a run. A worker in its own thread claims it under a lease, so a crash leaves
+   it retryable, not lost.
+2. The engine gives the model 6B's typed tools and nothing else. In Claude Code mode the built-in
+   shell, file and web tools, hooks, plugins and other MCP servers are all removed.
+3. Tools validate arguments, run within time and size limits, and persist results. A tool error
+   comes back to the model with a repair hint instead of ending the run.
+4. Before the final answer, delivery checks confirm current validation, exports, decision
+   evidence and packaging. A failure gets up to three repair turns.
+5. Every step streams to the browser as durable events, which survive a reconnect.
+
+## Model providers
+
+| Provider | `6B_PROVIDER` | Connects through | Models |
+|---|---|---|---|
+| Claude Code | `claude` | [Claude Agent SDK](https://docs.claude.com/en/docs/agent-sdk/overview) and the signed-in account, or `ANTHROPIC_API_KEY` | Opus 5.5, Sonnet 5.5 (xhigh effort) |
+| OpenAI | `openai` | Responses API with `OPENAI_API_KEY`, or a ChatGPT plan sign-in | GPT-6 Astra, GPT-6.1 Sol, GPT-6.1 Terra |
+| Workshop | `workshop` | Nothing. Deterministic offline examples | None |
+
+You can switch in the app under **Integrations → Model provider**. The choice is saved in
+`data/integrations/model.json` and overrides `.env` from then on. OpenAI chats also choose a
+reasoning effort (`low` to `xhigh`) in the composer.
+
+## Tools the model can call
+
+| Area | Tools |
+|---|---|
+| CAD | `build_cad_script` (preferred), `revise_cad_script`, `build_cad`, `revise_cad`, `inspect_validation`, `inspect_image` |
+| Mechanisms | `evaluate_motion`, `record_design_review` |
+| Manufacturing and sim | `slice_with_bambu`, `export_isaac_scene` |
+| Conversation | `ask_questions`, `request_approval`, `update_plan`, `set_specification`, `activity` |
+| Evidence | `record_decision`, `fetch_reference`, `choose_rules`, `record_rule_checks` |
+| Files and memory | `write_document`, `read_artifact`, `list_artifacts`, `package_artifacts`, `search_context`, `save_memory`, `load_workflow` |
+
+Model-written CAD scripts may import only `cadquery` and `math`. They run with restricted
+builtins under CPU and file-size limits. On macOS they also run under `sandbox-exec`, with no
+network and writes confined to the build folder.
+
+## Configuration
+
+Copy [`.env.example`](.env.example) to `.env` (`./install.sh` does this). The variables that
+matter most:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `6B_PROVIDER` | `workshop` | Starting provider: `claude`, `openai` or `workshop` |
+| `OPENAI_API_KEY` | | OpenAI key (`OPENAI_KEY` also works) |
+| `6B_MODEL` | | OpenAI model; hosted mode falls back to `gpt-6.1-terra` |
+| `6B_REASONING_EFFORT` | `medium` | Default OpenAI effort when a chat names none |
+| `6B_CLAUDE_MODEL` | Opus 5.5 | `claude-opus-5-5` or `claude-sonnet-5-5` |
+| `6B_CLAUDE_TIMEOUT` | `600` | Seconds per Claude Code run (`1200` for complex work) |
+| `6B_MAX_RUN_TOKENS` | `200000` | Soft token ceiling per run, including cached input |
+| `6B_TOOL_TIMEOUT` | `180` | Seconds per tool call |
+| `6B_DATA_DIR` | `./data` | SQLite database, files, saved connections |
+| `6B_REFERENCE_DOMAINS` | | Domains `fetch_reference` may read; empty means none |
+| `6B_API_TOKEN` | | Optional bearer token for a local API |
+| `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY` | | Onshape import and export (or connect in the app) |
+| `6B_ISAAC_*` | | Read-only observer for an existing Isaac Sim container over SSH |
+
+## Deploy
+
+[`Dockerfile`](Dockerfile) builds the API image. On Railway, set the service's root directory
+to `/backend`, attach a volume for `6B_DATA_DIR`, and set:
+
+| Variable | Value |
+|---|---|
+| `6B_HOSTED` | `1`: each browser brings its own connection; server-wide Anthropic keys are ignored |
+| `6B_HOST`, `6B_BEHIND_PROXY` | `*` and `1`: listen on all interfaces and trust Railway's proxy |
+| `6B_ALLOWED_HOSTS` | The public host names |
+| `OPENAI_API_KEY` | Optional site key. Every OpenAI chat runs on it, and visitors pick only the model and effort |
+| `FIREBASE_SERVICE_ACCOUNT`, `FIREBASE_WEB_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_APP_ID` | Google sign-in and a cloud copy of each chat |
+| `6B_OWNER_EMAIL` | The admin account that may change workspace-wide settings |
+
+Browser keys travel only with requests that start a run. The server holds them in memory for that
+task and never writes them to the database, events or logs.
+
+## API at a glance
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/tasks`, `POST /api/tasks/{id}/messages` | Start a chat or send a follow-up |
+| `GET /api/tasks/{id}/events` | Server-sent event stream with a resumable cursor |
+| `POST /api/tasks/{id}/questions/{q}/answer`, `POST /api/tasks/{id}/approvals/{a}` | Answer questions, approve plans |
+| `GET /api/tasks/{id}/artifacts/{a}/content` | Download a file version |
+| `POST /api/tasks/{id}/artifacts/{a}/rebuild` | Rebuild a CAD script from slider values, without a model call |
+| `GET /api/tasks/{id}/audit`, `GET /api/tasks/{id}/tools/{call}` | Tool history, sources, decisions, delivery checks |
+| `POST /api/onshape/import`, `POST /api/onshape/export` | Onshape round trip |
+| `GET /api/capabilities`, `GET /api/health` | Active provider, model, effort and limits |
+
+The full list, with schemas, is at `/docs`.
+
+## Tests
 
 ```sh
-./verify.sh
+cd backend
+../.venv/bin/python -m pytest -q
 ```
 
-Tests exercise real CAD export/reimport, mesh integrity, failed geometry, artifact
-versioning and packages, task idempotency, question ownership, worker recovery,
-context boundaries, queued messages, auth/origin checks, and the provider tool loop.
-The test launcher disables pytest's capture plugin to avoid a native readline crash
-in the available Anaconda interpreter. Test assertions still execute normally.
+The suite covers real CAD export and re-import, mesh integrity, artifact versioning, worker
+recovery, auth and origin checks, hosted key handling, both model adapters, and the tool
+protocol. `./verify.sh` at the root runs these plus the frontend checks.
 
-The expanded backend suite covers Flask and Claude Code protocol behavior as well. See the
-[verification record](docs/VERIFICATION.md) for browser evidence, sample output,
-and the limits of these checks.
+## Code map
 
-## Where to look
-
-| File | Responsibility |
+| Path | Responsibility |
 |---|---|
-| `app/main.py`, `app/api.py` | Flask REST endpoints, Pydantic validation, OpenAPI, SSE, local access boundary |
-| `app/runtime.py` | Persistent background worker lifecycle separate from request threads |
-| `app/db.py` | SQLite schema, transactions, lifecycle, run leases, event log |
-| `app/engine.py` | Workshop execution and live model/tool loop |
-| `app/provider.py` | Responses API transport and bounded retries |
-| `app/claude_code.py` | Claude Code integration through the Agent SDK, in-process MCP tools, sign-in check |
-| `app/connections.py` | Model connection chosen in the app: live checks, saved choice, provider switching |
-| `app/tools.py` | Typed tool registry, workflow loading, reference retrieval, CAD process |
-| `app/cad_schema.py` | Finite CAD feature graph and limits |
-| `app/cad_worker.py` | Trusted CAD compiler, exports, views, numeric checks |
-| `app/motion_worker.py`, `app/engineering_schema.py` | Prescribed rigid-body studies and typed engineering evidence |
-| `app/reference_reader.py`, `app/pdf_worker.py` | Public references, PDF pages, provenance and drawing images |
-| `app/artifacts.py` | Immutable files, versions, checksums, ZIP manifests |
-| `app/prompts/` | Editable orchestration, CAD, research, manufacturing, review, communication |
-| `docs/BEHAVIORAL_RESEARCH.md` | Observations, fresh probe, revision probe, confidence levels |
-| `docs/ARCHITECTURE.md` | Backend design, state transitions, contracts, extension boundaries |
-| `docs/PARITY_MATRIX.md` | Implemented behaviors and remaining gaps |
-| `docs/VERIFICATION.md` | Automated checks, browser evidence, sample output and their limits |
-| `docs/IMAGE_CAD_SIMULATION.md` | Object photos, assembly playback and Isaac scene export |
+| `app/main.py`, `app/api.py` | Routes, validation, OpenAPI, SSE, access and origin checks |
+| `app/runtime.py`, `app/db.py` | Worker lifecycle; SQLite schema, leases and event log |
+| `app/engine.py`, `app/completion.py` | Run loop and delivery checks |
+| `app/provider.py`, `app/claude_code.py`, `app/chatgpt.py` | OpenAI Responses, Claude Agent SDK and ChatGPT plan adapters |
+| `app/connections.py`, `app/credentials.py` | Saved model connections; browser-held keys in hosted mode |
+| `app/tools.py`, `app/tool_protocol.py` | Tool registry and the shared call boundary |
+| `app/cad_script.py`, `app/cad_worker.py`, `app/motion_worker.py` | CAD sandbox, compiler and exports, motion checks |
+| `app/artifacts.py` | Immutable versions, SHA-256, ZIP manifests |
+| `app/onshape.py`, `app/bambu.py`, `app/simulation.py` | Integrations |
+| `app/firebase.py`, `app/rules.py` | Google sign-in and cloud sync; rules |
+| `app/prompts/` | Orchestrator, CAD, research, manufacturing, review and communication prompts |
 
-## Operating limits
+## More detail
 
-This is a **single-user, loopback-only local implementation**. It is not ready to
-expose directly as a public multi-tenant service. Before hosting, add real identity,
-workspace ownership checks, role-based permissions, durable worker infrastructure,
-object storage, quotas, backups, secret management, and an outbound network proxy.
-An optional `6B_API_TOKEN` protects the local API; the UI stores it for the current
-browser session. This does not replace production identity.
+- [Reference](docs/REFERENCE.md): every feature in depth, including photos to CAD, Onshape,
+  sliders, approvals, evidence, Isaac and operating limits.
+- [Architecture](docs/ARCHITECTURE.md): components, state machine, contracts.
+- [Verification](docs/VERIFICATION.md): what the checks prove and what they don't.
+- [Image, CAD and simulation](docs/IMAGE_CAD_SIMULATION.md): evaluation record.
 
-The CAD language deliberately excludes arbitrary Python and shell execution. It does
-not implement native desktop CAD connections, general code sandboxes, general web
-search, FEA, joint/contact dynamics, continuous swept-volume proofs, sampled wall
-thickness, or third-party OAuth connectors. Tool and workflow interfaces
-are ready for those extensions, but they are not represented as connected features.
-
-Geometric checks are real. Physical fit, material behavior, safe loads, robot operation,
-and print success are not established by those checks. STEP preserves editable solids;
-the JSON recipe preserves construction intent. STEP does not preserve a native CAD
-feature-history tree. [CadQuery's format documentation](https://cadquery.readthedocs.io/en/latest/importexport.html)
-explains that distinction.
-
-Data lives in `backend/data/`, excluded from Git. Back up the directory while the
-server is stopped. Schedules run only while the server is active; missed intervals
-coalesce to one run on restart. No recurring schedule was enabled during development.
-
-PDF extraction needs `pypdf`; page images additionally need Poppler's `pdftoppm` on
-PATH (available on this machine). The reader accepts up to 24 MB / 500 pages and
-returns at most three selected pages per call. It does not read arbitrary local PDFs.
-`inspect_image` sends generated image pixels to Claude Code; the direct API
-adapter does not expose that tool. Image inspection is a model observation, not a physical test.
-
-Complex runs can use `6B_CLAUDE_TIMEOUT=1200` and
-`6B_MAX_RUN_TOKENS=2000000`. The token ceiling counts repeated
-cached input as well as new input/output, is soft, and is not a currency spending cap.
-Usage records expose cached/input/output counts separately. Smaller ceilings remain
-useful for simple tasks; artifacts survive a budget stop. No run is silently retried.
-
-## Execution evidence and delivery checks
-
-The task's **Details** tab shows versioned decision summaries, their exact evidence
-files, fetched sources (URL, retrieval time, document hash and PDF pages), tool
-arguments/results, elapsed times, and delivery-check failures. Tools expand on demand;
-large CAD inputs are not sent with every audit refresh. Earlier decisions remain
-inspectable, and measurements tied to replaced geometry are marked stale.
-
-`record_decision` records a short explanation with an explicit basis: assumption,
-user choice, design choice, fetched source, or numeric measurement. Evidence IDs must
-belong to the task. Source/measurement claims need appropriate evidence, and geometry
-measurements must reference the current build. These are user-facing summaries;
-source interpretation is model-authored, not private chain-of-thought or a proof of
-physical operation.
-
-Both live adapters now use `app/completion.py`: final answers wait for current CAD
-validation/inspection, exports, decision evidence, assembly notes and packaging.
-Failed checks can trigger up to three repair turns within the existing run budgets.
-ZIP creation verifies stored hashes and rejects mixed CAD builds, failed motion
-reports, stale CAD files and reserved manifest filenames. Tool budgets also apply to
-batched calls in direct API mode. Tool IDs are scoped to each Claude Code session so a
-clarification resume cannot replay an unrelated old result.
-
-API additions:
-
-- `GET /api/tasks/{task_id}/audit`: compact tool lifecycle, sources, decision history
-  and delivery checks.
-- `GET /api/tasks/{task_id}/tools/{call_id}`: full arguments and result for one call,
-  restricted to that task.
-
-Existing `/trace`, `/activity` and SSE contracts remain available. Tool interruption
-is persisted after cancellation, shutdown or an expired worker lease. No database
-migration is needed: the audit uses existing tool, artifact and event records.
-
-Tool execution uses one shared boundary for both model providers. Malformed JSON,
-duplicate keys, nonfinite numbers, oversized payloads, and schema errors return
-structured repair hints without ending the run. Tool availability is enforced when
-executing, and rejected calls remain visible in the audit. Call IDs are claimed
-atomically; replaying a completed call returns its stored result without repeating
-side effects. Reusing an ID for a different request is rejected.
-
-`6B_TOOL_TIMEOUT` (default 180 seconds) bounds each tool's asynchronous work;
-the Claude Code run deadline can shorten this. Pending downloads and child-process work
-check cancellation every 250 ms and await cleanup before finalizing the trace.
-Synchronous in-process operations finish before the event loop can observe a stop.
-Timeouts are never automatically retried because partial artifacts may already
-exist. Inspect saved output before explicitly retrying. Validation failures include
-field paths; rejected argument previews are limited to 8 KB and fingerprinted.
-
-## Object photos, assembly playback and NVIDIA Isaac
-
-Open a task's **Object photos** tab. Attach PNG, JPEG or WebP views of the same
-object, label the angles, and enter at least one measured dimension plus what it
-represents. Choose **Reconstruct object** or **Design a gripper**. Up to twelve
-views are supported. Front, side and top views reduce ambiguity. Claude Code inspects
-actual image pixels and generates parametric solids using the existing CAD kernel.
-This is vision-assisted reconstruction, not calibrated photogrammetry: hidden
-surfaces, tolerances and unmeasured dimensions remain estimates. Workshop and direct
-API modes do not interpret the uploaded photos.
-
-Photos are decoded with bounded pixel counts, oriented using EXIF, converted to RGB
-PNG and resized to a maximum 1600-pixel edge. Metadata is stripped; original and
-normalized SHA-256 hashes are retained. `object_views.json` records angles, scale
-and requirements. Every image in the active set must be inspected before CAD can
-build. Each build retains `reconstruction_sources.json` and the source-set hash.
-
-Open STEP, construction JSON or a motion study to use the assembly explorer. It
-supports exploded views, part isolation/visibility/highlighting, camera presets,
-keyboard orbit/zoom, optional turntable, and study playback with pause, scrub and
-speed control. Motion uses the same world-space deltas, rotation order and pivots as
-the exact-solid motion checker. Exploded offsets and playback speed are illustrative;
-no dynamics results are inferred from animation.
-
-The **Simulation** tab reads the configured existing Isaac scene through SSH/MCP.
-Only `franka_observe`, `franka_task_status` and `franka_snapshot` are allowlisted;
-there is no motion command, stop-latch reset, physical-robot control or public port.
-Set the `6B_ISAAC_*` variables in `.env.example` to an existing instance and
-container. The server uses the operator's existing SSH authentication. Connection
-state, measured contacts, stop state and the previous test result are shown separately
-from validation of the open design. A failed viewport capture is reported as an error.
-
-**Export Isaac scene** creates an assembled USD collision scene in metres/Z-up and
-an `isaac_manifest.json` tied to the exact CAD, mesh and scene hashes. UI export is
-static. The `export_isaac_scene` tool/API can also declare dynamic parts with explicit
-mass, friction and restitution. Dynamic collision uses convex hulls, which must be
-reviewed for cavities and contact patches. Exports do not infer joints, actuators,
-robot mounts, or physically validated materials; they do not change the running scene.
-The manifest gives the remaining contact, hold, slip, release and repeatability tests.
-See [the evaluation record](docs/IMAGE_CAD_SIMULATION.md) for tested behavior and limits.
-
-## Onshape import
-
-Connect from **Integrations → Onshape** with an API key pair created at
-<https://dev-portal.onshape.com/keys> (Read access is enough). Keys are verified
-against `/users/sessioninfo`, stored owner-only in `data/integrations/onshape.json`,
-and never returned to the browser. Requests are HMAC-signed against
-`https://<stack>.onshape.com/api/v17`; only `*.onshape.com` hosts and redirects are
-accepted. Alternatively set `ONSHAPE_ACCESS_KEY`, `ONSHAPE_SECRET_KEY` and optionally
-`ONSHAPE_BASE_URL` in `.env`.
-
-Import a Part Studio or Assembly from **Files**, a task's **Files** tab, or the home
-page. Each import saves one STL per distinct part (millimetres, Part Studio
-coordinates), a placed `preview.mesh.json` for the 3D studio, an
-`onshape_import.json` manifest (placements, quantities, sizes, watertightness) and the
-Onshape thumbnail. Selecting an imported part in the studio sends a request scoped to
-that read-only geometry. Imports are snapshots: features, mates and parameters stay
-in Onshape. Limits: 200 instances, 80 distinct parts, 900k triangles.
-
-**Send to Onshape** (task heading or a STEP file's preview) uploads a generated STEP
-file to a new or chosen document through `POST /translations` (`translate=true`,
-optionally flattening the assembly into one Part Studio), polls the translation with
-backoff for up to 150 s, and links to the new element. This is the only write
-6B makes, it adds a new element without changing existing ones, and it needs
-API keys with Write scope.
-
-## CAD as code, sliders and plan approval
-
-`build_cad_script` runs a model-written CadQuery script (sketches, revolve, loft,
-sweep, shell, holes, patterns) and produces the same STL/STEP/validation/preview
-outputs as `build_cad`, plus `<name>.cad.py` and the exact placed solids
-(`<name>.geometry.zip`, used by motion checks). Scripts are checked statically
-(only `cadquery` and `math` imports; no file, network, `getattr`, dunder, class or
-`with` usage; exporters/importers blocked), run with restricted builtins and CPU and
-file-size limits, and on macOS under `sandbox-exec` with no network and writes
-confined to the build folder. Errors report the script line. After each build the
-model receives the rendered review image; `revise_cad_script` applies exact
-find/replace edits.
-
-Top-of-file assignments such as `wall = 2.4  # [1.6:0.2:5] Wall thickness (mm)`,
-grouped under `# --- Housing ---`, become sliders in the 3D studio. `POST
-/api/tasks/{id}/artifacts/{script}/rebuild` rewrites only those literals and rebuilds
-in the same sandbox, without a model call, as a new validated version.
-
-Once a task has a design, `request_approval` pauses the run with a plan (changes,
-what stays fixed, risks, checks). Design tools return `approval_required` until the
-plan is approved (`POST /api/tasks/{id}/approvals/{approval}`). Set a task's
-`approval_policy` to `auto` to skip this.
+The prompts were written independently from observed workflows. No private prompts or server
+code were used.
