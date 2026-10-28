@@ -65,36 +65,36 @@ export function ModelThumbnail({ file, meshFile, sourcePath, onError }) {
       .then((response) => response.json())
       .then((mesh) => {
         if (controller.signal.aborted) return;
-        renderer = mountViewer(target, mesh, {
-          still: true,
-          onRender: () => {
-            if (capturing) return;
-            capturing = true;
-            try {
-              target.toBlob((blob) => {
-                if (!controller.signal.aborted) {
-                  if (blob) {
-                    objectUrl = URL.createObjectURL(blob);
-                    setSnapshot(objectUrl);
-                  } else onError();
-                }
-                release();
-              }, "image/png");
-            } catch {
-              onError();
-              release();
-            }
-          },
-        });
+        // A part's STL shows only that part, framed on its own; the snapshot is
+        // taken on the first frame, so hiding the rest afterwards comes too late.
         const part = mesh.parts.find(
           (part) => `${part.name}.stl` === file.name,
         );
-        if (part)
-          renderer.update({
-            hidden: mesh.parts
-              .filter((item) => item !== part)
-              .map((item) => item.name),
-          });
+        renderer = mountViewer(
+          target,
+          part ? { ...mesh, parts: [part] } : mesh,
+          {
+            still: true,
+            onRender: () => {
+              if (capturing) return;
+              capturing = true;
+              try {
+                target.toBlob((blob) => {
+                  if (!controller.signal.aborted) {
+                    if (blob) {
+                      objectUrl = URL.createObjectURL(blob);
+                      setSnapshot(objectUrl);
+                    } else onError();
+                  }
+                  release();
+                }, "image/png");
+              } catch {
+                onError();
+                release();
+              }
+            },
+          },
+        );
       })
       .catch(() => {
         if (!controller.signal.aborted) onError();

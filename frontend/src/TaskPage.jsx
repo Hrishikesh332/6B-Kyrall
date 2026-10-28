@@ -53,6 +53,7 @@ export default function TaskPage({
   notify,
   onTaskChange,
   onConnection,
+  onModelChange,
 }) {
   const { task, activity, error, refresh } = useTask(
     id,
@@ -469,6 +470,7 @@ export default function TaskPage({
             >
               <Composer
                 cap={cap}
+                onModelChange={onModelChange}
                 onConnectModel={() => setModal({ kind: "model" })}
                 onSubmit={send}
                 onRefused={notify}

@@ -51,6 +51,14 @@ class Recorder:
         return {'id':'r2','status':'completed','output':[text],'usage':{'total_tokens':10}}
 
 
+class EffortRecorder(Recorder):
+    """Records the reasoning effort each model call ran at."""
+    def __init__(self, settings): super().__init__(settings); self.efforts = []
+    async def respond(self, *args, **kwargs):
+        self.efforts.append(self.settings.reasoning_effort)
+        return await super().respond(*args, **kwargs)
+
+
 def test_server_keys_and_saved_connections_are_ignored(hosted):
     s = hosted.state.settings
     assert (s.provider, s.model, s.api_key, s.anthropic_api_key) == ('workshop', '', '', '')
@@ -229,8 +237,87 @@ async def test_openai_chats_run_on_the_site_key_with_an_offered_model(site):
         if path.is_file(): assert b'SITE-SECRET' not in path.read_bytes(), path
 
 
+@pytest.mark.asyncio
+async def test_each_chat_runs_at_the_reasoning_effort_its_browser_chose(site):
+    engine, db, client = site.state.engine, site.state.db, site.test_client()
+    engine.provider = recorder = EffortRecorder(site.state.settings)
+    client.post('/api/tasks', json=PROMPT, headers={**browser('openai', 'gpt-6.1-sol'), 'X-6B-Effort':'xhigh'})
+    # A browser that names no effort runs at the server's 6B_REASONING_EFFORT.
+    client.post('/api/tasks', json=PROMPT)
+    for _ in range(2): await engine.run(db.claim())
+    assert recorder.efforts == ['xhigh', 'xhigh', 'medium', 'medium']
+    caps = client.get('/api/capabilities', headers={**browser('openai', 'gpt-6.1-sol'), 'X-6B-Effort':'low'}).get_json()
+    assert caps['reasoning_effort'] == 'low'
+    assert client.post('/api/tasks', json=PROMPT, headers={**browser(), 'X-6B-Effort':'max'}).status_code >= 400
+
+
 def test_6b_model_picks_the_site_default_among_offered_models(tmp_path):
     def default(model):
         return create_app(Settings(data_dir=tmp_path, hosted=True, api_key='sk-site', model=model, api_token='',
                                    worker_enabled=False)).state.settings.model
     assert default('gpt-6.1-sol') == 'gpt-6.1-sol' and default('gpt-5') == 'gpt-6.1-terra'
+
+
+@pytest.fixture
+def accounts(tmp_path):
+    # Hosted with Google sign-in: each account may save its Claude key to itself.
+    from .test_firebase import FakeDatabase, FakeFirebase
+    database = FakeDatabase()
+    app = create_app(Settings(data_dir=tmp_path, hosted=True, api_token='', worker_enabled=False, account_key_secret='test-secret'),
+                     firebase=FakeFirebase(True, database))
+    app.state.model_transport = httpx.MockTransport(
+        lambda request: httpx.Response(200 if request.headers['x-api-key'] == 'sk-ant-ADA-1234' else 401, json={'data':[]}))
+    return app, database
+
+
+def account_client(app, uid):
+    from app.firebase import SESSION_COOKIE
+    client = app.test_client()
+    client.set_cookie(SESSION_COOKIE, 'cookie-'+uid)
+    return client
+
+
+def test_a_claude_key_saved_to_a_google_account_runs_on_every_device(accounts, monkeypatch):
+    # Not an asyncio test: saving checks the key with Anthropic inside the request.
+    import asyncio
+    app, database = accounts
+    seen = []
+    async def fake_run_claude(engine, run):
+        seen.append((engine.settings.anthropic_api_key, engine.settings.claude_model, engine.settings.account_key))
+        engine.db.finish(run['id'], 'completed')
+    monkeypatch.setattr('app.claude_code.run_claude', fake_run_claude)
+    ada, laptop = account_client(app, 'a'), account_client(app, 'a')
+    claude = lambda client: next(p for p in client.get('/api/integrations/model').get_json()['providers'] if p['id'] == 'claude')
+    assert claude(ada)['account_key'] == {'available':True, 'saved':False, 'hint':'', 'model':''}
+    # A key Anthropic rejects is not saved.
+    bad = ada.put('/api/integrations/model/account-key', json={'api_key':'sk-ant-WRONG', 'model':'claude-opus-5-5'})
+    assert bad.status_code == 422 and 'rejected' in bad.get_json()['detail']
+    saved = ada.put('/api/integrations/model/account-key', json={'api_key':'sk-ant-ADA-1234', 'model':'claude-sonnet-5-5'}).get_json()
+    assert saved == {'available':True, 'saved':True, 'hint':'1234', 'model':'claude-sonnet-5-5'}
+    # Only ciphertext reaches the database, and no browser ever gets the key back.
+    assert b'sk-ant-ADA' not in json.dumps(database.data).encode() and 'sk-ant-ADA' not in json.dumps(claude(ada))
+    # A device that sends no connection starts on the account's key; one that names it runs it too.
+    overview = laptop.get('/api/integrations/model').get_json()
+    assert overview['active']['provider'] == 'claude' and overview['active']['source'] == 'account'
+    laptop.post('/api/tasks', json=PROMPT)
+    ada.post('/api/tasks', json=PROMPT, headers={**browser('claude', 'claude-opus-5-5'), 'X-6B-Account-Key':'1'})
+    for _ in range(2): asyncio.run(app.state.engine.run(app.state.db.claim()))
+    assert seen == [('sk-ant-ADA-1234', 'claude-sonnet-5-5', True), ('sk-ant-ADA-1234', 'claude-opus-5-5', True)]
+    # Another account never runs on it, and changing the model keeps the key.
+    bo = account_client(app, 'b')
+    refused = bo.post('/api/tasks', json=PROMPT, headers={**browser('claude', 'claude-opus-5-5'), 'X-6B-Account-Key':'1'})
+    assert refused.status_code == 422 and 'Google account' in refused.get_json()['detail']
+    assert bo.get('/api/integrations/model').get_json()['active']['provider'] == 'workshop'
+    assert ada.put('/api/integrations/model/account-key', json={'model':'claude-opus-5-5'}).get_json()['hint'] == '1234'
+    assert app.state.account_keys.key('a') == 'sk-ant-ADA-1234'
+    assert ada.delete('/api/integrations/model/account-key').get_json()['saved'] is False
+    assert app.state.account_keys.key('a') == '' and 'model_key' not in database.data['users'].get('a', {})
+
+
+def test_account_keys_need_hosted_google_sign_in(hosted, accounts):
+    app, _ = accounts
+    signed_out = app.test_client().put('/api/integrations/model/account-key', json={'api_key':'sk-ant-ADA-1234'})
+    assert signed_out.status_code == 401
+    off = hosted.test_client().put('/api/integrations/model/account-key', json={'api_key':'sk-ant-ADA-1234'})
+    assert off.status_code == 404
+    assert 'account_key' in next(p for p in hosted.test_client().get('/api/integrations/model').get_json()['providers'] if p['id'] == 'claude')

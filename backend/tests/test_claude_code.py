@@ -234,6 +234,19 @@ def test_only_gpt_6_astra_and_6_1_sol_and_terra_are_offered(tmp_path):
     assert chosen.json['active']['source'] == 'workspace'
 
 
+def test_a_chosen_reasoning_effort_is_saved_for_later_runs(tmp_path):
+    def app(): return create_app(Settings(data_dir=tmp_path, provider='openai', model='gpt-6.1-sol', api_key='sk-local',
+                                          api_token='', worker_enabled=False, anthropic_api_key=''))
+    c = app().test_client()
+    assert c.get('/api/capabilities').json['reasoning_effort'] == 'medium'
+    assert c.put('/api/integrations/model/choice', json={'model':'gpt-6.1-sol', 'effort':'max'}).status_code == 422
+    assert c.put('/api/integrations/model/choice', json={'model':'gpt-6.1-sol', 'effort':'xhigh'}).status_code == 200
+    assert c.get('/api/capabilities').json['reasoning_effort'] == 'xhigh'
+    # Switching only the model keeps it, and so does a restart.
+    c.put('/api/integrations/model/choice', json={'model':'gpt-6-astra'})
+    assert app().state.settings.reasoning_effort == 'xhigh'
+
+
 def test_removed_provider_is_rejected_and_old_choice_falls_back(tmp_path):
     saved = tmp_path/'integrations'/'model.json'
     saved.parent.mkdir(parents=True); saved.write_text('{"provider":"retired","models":{"retired":"old-model"}}')

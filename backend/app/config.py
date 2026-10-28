@@ -26,10 +26,14 @@ OPENAI_MODELS = ({'id':'gpt-6-astra', 'name':'GPT-6 Astra'}, {'id':'gpt-6.1-sol'
 def openai_model_id(model):
     return model if any(m['id'] == model for m in OPENAI_MODELS) else OPENAI_MODELS[-1]['id']
 
+# The reasoning efforts an OpenAI chat can run at, lightest first; the picker in the
+# composer offers these, and a chat that names none runs at 6B_REASONING_EFFORT.
+REASONING_EFFORTS = ('low', 'medium', 'high', 'xhigh')
+
 # Hosted 6B: the browser's own model connection for the current request or run. It
 # shadows these settings fields only inside that context and never touches the shared values.
 CONNECTION = ContextVar('6b_connection', default=None)
-CONNECTION_FIELDS = frozenset({'provider', 'model', 'api_key', 'claude_model', 'anthropic_api_key', 'claude_home', 'openai_plan', 'site_key'})
+CONNECTION_FIELDS = frozenset({'provider', 'model', 'api_key', 'claude_model', 'anthropic_api_key', 'claude_home', 'openai_plan', 'site_key', 'account_key', 'reasoning_effort'})
 # The Google account signed in for the current request (uid, email, name, picture), when
 # Google sign-in is on. New chats, projects and jobs belong to it.
 USER = ContextVar('6b_user', default=None)
@@ -78,6 +82,11 @@ class Settings:
     openai_plan: bool = False
     # Hosted: the OpenAI connection is this deployment's own OPENAI_API_KEY, not the browser's.
     site_key: bool = False
+    # Hosted: the Claude key is the one saved to the signed-in Google account (account_keys.py).
+    account_key: bool = False
+    # Encrypts those saved keys; empty uses the Firebase service account's private key, so
+    # changing either one forgets every saved key.
+    account_key_secret: str = field(default_factory=lambda: os.getenv('6B_ACCOUNT_KEY_SECRET', ''))
     # Sign in with ChatGPT on a hosted website needs a client ID approved by OpenAI. Without
     # one, OpenAI's self-serve registration only redirects to http://127.0.0.1.
     chatgpt_client_id: str = field(default_factory=lambda: os.getenv('6B_CHATGPT_CLIENT_ID', ''))

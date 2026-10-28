@@ -161,7 +161,9 @@ function ActiveSummary({ active }) {
           ·{" "}
           {active.source === "site"
             ? "this site’s OpenAI API key"
-            : active.source === "browser"
+            : active.source === "account"
+              ? "your key, saved to your Google account"
+              : active.source === "browser"
               ? active.provider === "workshop"
                 ? "no key connected in this browser"
                 : active.plan
@@ -604,8 +606,14 @@ function BrowserKeySetup({ provider, onConnected, onClose }) {
     [remember, setRemember] = useState(rememberedConnection(MODEL_CONNECTION)),
     [check, setCheck] = useState(null),
     [busy, setBusy] = useState("");
+  // Signed in with Google: Claude's key can be saved to the account instead, for every device.
+  const account = provider.account_key?.available ? provider.account_key : null;
+  const [toAccount, setToAccount] = useState(
+    !!account && (mine ? !!mine.account : true),
+  );
   const [label, placeholder, keysPage] = KEY_PAGES[provider.id];
-  const key = apiKey.trim() || mine?.key || "";
+  const key = apiKey.trim() || (mine?.account ? "" : mine?.key) || "";
+  const ready = key || (toAccount && account?.saved);
   const run = async (kind, work) => {
     setBusy(kind);
     try {
@@ -626,6 +634,22 @@ function BrowserKeySetup({ provider, onConnected, onClose }) {
   };
   const connect = () =>
     run("connect", async () => {
+      if (toAccount) {
+        // The server checks the key with Anthropic before it saves it.
+        await api("/integrations/model/account-key", {
+          method: "PUT",
+          body: { api_key: key, model: model.trim() },
+        });
+        saveConnection(
+          MODEL_CONNECTION,
+          { provider: provider.id, model: model.trim(), account: true },
+          true,
+        );
+        setApiKey("");
+        setCheck({ ok: true, message: "Saved to your Google account." });
+        await onConnected(await api("/integrations/model"));
+        return;
+      }
       if (!(await verify())) return;
       saveConnection(
         MODEL_CONNECTION,
@@ -639,6 +663,13 @@ function BrowserKeySetup({ provider, onConnected, onClose }) {
     run("disconnect", async () => {
       forgetConnection(MODEL_CONNECTION);
       setCheck({ ok: true, message: "Key removed from this browser." });
+      await onConnected(await api("/integrations/model"));
+    });
+  const forgetAccountKey = () =>
+    run("disconnect", async () => {
+      await api("/integrations/model/account-key", { method: "DELETE" });
+      if (mine?.account) forgetConnection(MODEL_CONNECTION);
+      setCheck({ ok: true, message: "Key removed from your Google account." });
       await onConnected(await api("/integrations/model"));
     });
   return (
@@ -658,9 +689,11 @@ function BrowserKeySetup({ provider, onConnected, onClose }) {
           autoComplete="off"
           spellCheck={false}
           placeholder={
-            mine?.key
-              ? `Saved in this browser · …${mine.key.slice(-4)}`
-              : placeholder
+            toAccount && account?.saved
+              ? `Saved to your Google account · …${account.hint}`
+              : mine?.key
+                ? `Saved in this browser · …${mine.key.slice(-4)}`
+                : placeholder
           }
           onChange={(e) => setApiKey(e.target.value)}
         />
@@ -686,18 +719,31 @@ function BrowserKeySetup({ provider, onConnected, onClose }) {
           />
         )}
       </label>
-      <label className="inline-check">
-        <input
-          type="checkbox"
-          checked={remember}
-          onChange={(e) => setRemember(e.target.checked)}
-        />
-        Remember on this device (otherwise cleared when this tab closes)
-      </label>
+      {account && (
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={toAccount}
+            onChange={(e) => setToAccount(e.target.checked)}
+          />
+          Save to my Google account (use it on any device I sign in on)
+        </label>
+      )}
+      {!toAccount && (
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+          />
+          Remember on this device (otherwise cleared when this tab closes)
+        </label>
+      )}
       <p className="connect-note">
-        <KeyRound size={13} /> Your key stays in this browser. 6B sends it only
-        when a task runs and holds it in server memory until that run ends; it
-        is never saved on the server or shown to other visitors.
+        <KeyRound size={13} />{" "}
+        {toAccount
+          ? "Your key is encrypted and saved to your Google account, so every device you sign in on can use it. It is never sent back to a browser or shown to other visitors; 6B decrypts it only while your task runs."
+          : "Your key stays in this browser. 6B sends it only when a task runs and holds it in server memory until that run ends; it is never saved on the server or shown to other visitors."}
       </p>
       {check && (
         <p className={`connection-check${check.ok ? " ok" : ""}`} role="status">
@@ -708,7 +754,16 @@ function BrowserKeySetup({ provider, onConnected, onClose }) {
         <button type="button" className="secondary" onClick={onClose}>
           Done
         </button>
-        {mine && (
+        {account?.saved && (
+          <ConfirmButton
+            confirm="Remove the key from your Google account? Every device signed in with it stops using it."
+            disabled={!!busy}
+            onConfirm={forgetAccountKey}
+          >
+            <Unplug size={14} /> Remove from account
+          </ConfirmButton>
+        )}
+        {mine && !mine.account && (
           <ConfirmButton
             confirm="Remove the key from this browser?"
             disabled={!!busy}
@@ -730,7 +785,7 @@ function BrowserKeySetup({ provider, onConnected, onClose }) {
           type="button"
           className="primary"
           disabled={
-            !!busy || !key || (provider.id === "openai" && !model.trim())
+            !!busy || !ready || (provider.id === "openai" && !model.trim())
           }
           onClick={connect}
         >
