@@ -377,6 +377,9 @@ def create_app(settings=None,provider=None,firebase=None):
         if settings.hosted:
             for item in overview['providers']:
                 if item['id']=='claude': item['account_key']=account_keys.status(account())
+                # With the site's own OpenAI key, visitors may still run on their own ChatGPT plan
+                # once OpenAI has approved this website (6B_CHATGPT_CLIENT_ID).
+                if item['id']=='openai' and item.get('site_key'): item['chatgpt_sign_in']=chatgpt.availability(request.host_url) is None
         return overview
 
     def own_account_keys():
