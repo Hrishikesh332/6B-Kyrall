@@ -79,7 +79,7 @@ export default function RulesPage({ notify }) {
     <div className="page rules-page">
       <PageHeading
         title="Rules"
-        description="Requirements the agent follows. General rules always apply; a rule set applies when a task matches it — the agent decides with a reason, or asks you."
+        description="Requirements the agent follows. General rules always apply; a rule set applies when a task matches it. FDM printing is on by default and the Kyrall challenge is off; switch either per chat."
       />
       {templateList.some((t) => !installed.has(t.name)) && (
         <section className="rule-templates" aria-label="Rule templates">

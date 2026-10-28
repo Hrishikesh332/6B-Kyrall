@@ -22,13 +22,12 @@ async def test_rule_sets_are_decided_checked_and_gated(app):
 
         tid = db.create_task(TaskCreate(prompt='Tomato gripper for the hackathon'))
         sets = (await c.get(f'/api/tasks/{tid}/rules')).json()
-        assert {s['rule_set']: s['status'] for s in sets} == {'': 'always', 'Kyrall robot gripper challenge': 'pending'}
+        assert {s['rule_set']: s['status'] for s in sets} == {'': 'always', 'Kyrall robot gripper challenge': 'skipped'}
+        assert next(s for s in sets if s['rule_set'])['decision']['decided_by'] == 'default'
 
         app.state.settings.provider = 'openai'
         run = db.claim()
         script = {'name': 'box', 'script': ENCLOSURE}
-        blocked = await runner.execute(tid, run['id'], 'b0', 'build_cad_script', script)
-        assert blocked['code'] == 'rules_decision_required'
         chosen = await runner.execute(tid, run['id'], 'c1', 'choose_rules', {'decisions': [
             {'rule_set': 'Kyrall robot gripper challenge', 'apply': True, 'reason': 'The brief is the hackathon tomato gripper'}]})
         must = [r for r in chosen['applied'][0]['rules'] if r['level'] == 'must']
@@ -54,3 +53,21 @@ async def test_rule_sets_are_decided_checked_and_gated(app):
         kyrall = next(s for s in sets if s['rule_set'] == 'Kyrall robot gripper challenge')
         assert kyrall['status'] == 'skipped' and kyrall['decision']['decided_by'] == 'user'
         assert kyrall['rules'][0]['check']['status'] == 'unverified'
+
+
+@pytest.mark.asyncio
+async def test_fdm_applies_by_default_without_a_decision(app):
+    db = app.state.db
+    async with httpx.AsyncClient(transport=AsyncWSGITransport(app=app), base_url='http://testserver') as c:
+        await c.post('/api/rules/templates/fdm_printing')
+        await c.post('/api/rules/templates/kyrall_gripper')
+        tid = db.create_task(TaskCreate(prompt='A gripper finger'))
+        sets = {s['rule_set']: s for s in (await c.get(f'/api/tasks/{tid}/rules')).json()}
+        assert sets['FDM 3D printing']['status'] == 'applied'
+        assert sets['Kyrall robot gripper challenge']['status'] == 'skipped'
+        from app.rules import agent_view, undecided
+        assert undecided(db, tid) == [] and not agent_view(db, tid)['undecided']
+        # Turning Kyrall on for one chat is the user's choice.
+        sets = {s['rule_set']: s for s in (await c.put(f'/api/tasks/{tid}/rules', json={
+            'rule_set': 'Kyrall robot gripper challenge', 'apply': True})).json()}
+        assert sets['Kyrall robot gripper challenge']['status'] == 'applied'
