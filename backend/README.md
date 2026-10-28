@@ -111,6 +111,13 @@ OpenAI through that key, on `gpt-6.1-terra` unless `6B_MODEL` names one of the o
 Visitors pick only the model; the key stays on the server, and every signed-in account's
 OpenAI chats are billed to it.
 
+With Google sign-in on, a hosted visitor can also save their Anthropic API key to their Google
+account (Integrations → Model provider → Claude Code → "Save to my Google account"). It is
+encrypted with `6B_ACCOUNT_KEY_SECRET` (or the Firebase service account's private key) and
+stored in the Realtime Database, never sent back to a browser, and any device they sign in on
+starts on it. A Claude Pro or Max subscription cannot be connected to a hosted site: Anthropic
+allows subscription sign-in only in its own apps, so hosted Claude runs on API keys.
+
 The direct Responses adapter was verified with controlled provider responses. In API mode, task content and tool results are
 sent to the configured provider; Responses storage is enabled for continuation via
 `previous_response_id`. API credentials are read from the server environment and

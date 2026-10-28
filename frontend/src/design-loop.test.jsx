@@ -174,6 +174,23 @@ describe("plan approval", () => {
     expect(refresh).toHaveBeenCalledTimes(2);
   });
 
+  it("folds a decided plan down to its title until opened", async () => {
+    const user = userEvent.setup();
+    render(
+      <ApprovalCard
+        message={{ content: plan }}
+        task={task("approved")}
+        refresh={vi.fn()}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: /Thicker walls/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Increase wall to 3 mm.")).toBeNull();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("cell", { name: "2 → 3 mm" })).toBeVisible();
+  });
+
   it("shows the decision and toggles the task policy", async () => {
     const user = userEvent.setup(),
       refresh = vi.fn().mockResolvedValue();

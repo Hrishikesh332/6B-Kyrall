@@ -1507,8 +1507,37 @@ dialog.preview-panel.is-expanded {
   gap: 10px;
   color: var(--accent-text);
 }
+.approval-toggle {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.approval-toggle:disabled {
+  cursor: default;
+}
+.approval-toggle:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
 .approval-card header svg {
   margin-top: 3px;
+}
+.approval-chevron {
+  flex: none;
+  color: #8e9784;
+  transition: transform 0.2s;
+}
+.approval-card.is-collapsed .approval-chevron {
+  transform: rotate(-90deg);
 }
 .approval-card .eyebrow {
   font-size: 8px;

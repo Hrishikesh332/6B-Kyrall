@@ -21,13 +21,11 @@ import {
   cadRefusal,
   date,
   followUpRefusal,
-  modeLabel,
   modelConnected,
   size,
   statusLabel,
 } from "./lib.js";
 import ModelPicker from "./ModelPicker.jsx";
-import ProviderLogo from "./ProviderLogo.jsx";
 
 export function Animated({ children, className = "", ...props }) {
   const [parent] = useAutoAnimate();
@@ -372,22 +370,12 @@ export function Composer({
           ) : (
             <small className="muted">{contextScope} context</small>
           )}
-          {initial ? (
-            <ModelPicker
-              cap={cap}
-              onChange={onModelChange}
-              onError={setError}
-            />
-          ) : (
-            <span className="composer-model">
-              {cap?.provider === "claude" || cap?.provider === "openai" ? (
-                <ProviderLogo provider={cap.provider} size={13} />
-              ) : (
-                <span className="status-dot" />
-              )}
-              {modeLabel(cap)}
-            </span>
-          )}
+          <ModelPicker
+            cap={cap}
+            onChange={onModelChange}
+            onError={setError}
+            followUp={!initial}
+          />
           <button
             className="send"
             type="submit"

@@ -12,11 +12,14 @@ import threading
 import time
 from urllib.parse import quote
 import httpx
-from .config import CONNECTION, OPENAI_MODELS, PROVIDERS
+from .config import CONNECTION, OPENAI_MODELS, PROVIDERS, REASONING_EFFORTS
 
-PROVIDER_HEADER, MODEL_HEADER, KEY_HEADER = 'X-6B-Provider', 'X-6B-Model', 'X-6B-Key'
+PROVIDER_HEADER, MODEL_HEADER, KEY_HEADER, EFFORT_HEADER = 'X-6B-Provider', 'X-6B-Model', 'X-6B-Key', 'X-6B-Effort'
+# Claude on the key saved to the signed-in Google account (account_keys.py), not one in the browser.
+ACCOUNT_HEADER = 'X-6B-Account-Key'
 MODEL_PATTERN = re.compile(r'^[A-Za-z0-9._:\-\[\]/]{0,120}$')
 NO_KEY = 'Add your API key in Integrations → Model provider, then try again.'
+NO_ACCOUNT_KEY = 'No Claude key is saved to the Google account you are signed in with. Add it in Integrations → Model provider, then try again.'
 
 
 @dataclass(frozen=True)
@@ -26,29 +29,37 @@ class Connection:
     key: str = ''
     # The key is the deployment's own OPENAI_API_KEY, never sent by or to a browser.
     site: bool = False
+    # The OpenAI reasoning effort the browser chose; empty runs at the server's default.
+    effort: str = ''
+    # The key is the one saved to the signed-in Google account.
+    account: bool = False
 
     def __repr__(self):
         # Never let a key reach a log line or traceback through repr().
-        return f'Connection(provider={self.provider!r}, model={self.model!r}, key={"set" if self.key else "none"}, site={self.site!r})'
+        return f'Connection(provider={self.provider!r}, model={self.model!r}, key={"set" if self.key else "none"}, site={self.site!r}, effort={self.effort!r}, account={self.account!r})'
 
     def fields(self, with_key=True):
         key = self.key if with_key else ''
         if self.provider == 'claude':
-            return {'provider':'claude', 'claude_model':self.model, 'anthropic_api_key':key, 'model':'', 'api_key':'', 'openai_plan':False}
+            return {'provider':'claude', 'claude_model':self.model, 'anthropic_api_key':key, 'model':'', 'api_key':'', 'openai_plan':False,
+                    'account_key':self.account}
         if self.provider in ('openai', 'chatgpt'):
             # "chatgpt" is the OpenAI Responses API paid by the user's ChatGPT plan (OAuth token as key).
             return {'provider':'openai', 'model':self.model, 'api_key':key, 'claude_model':'', 'anthropic_api_key':'',
-                    'openai_plan':self.provider == 'chatgpt', 'site_key':self.site}
+                    'openai_plan':self.provider == 'chatgpt', 'site_key':self.site, **({'reasoning_effort':self.effort} if self.effort else {})}
         return {'provider':'workshop', 'model':'', 'api_key':'', 'claude_model':'', 'anthropic_api_key':'', 'openai_plan':False}
 
 
 WORKSHOP = Connection('workshop')
 
 
-def from_headers(headers, with_key=False, site=WORKSHOP):
-    """The browser's connection; when it sends none, the deployment's own (`site`) or the workshop."""
+def from_headers(headers, with_key=False, site=WORKSHOP, account_key=None):
+    """The browser's connection; when it sends none, `site`: the account's saved Claude key, the
+    deployment's own OpenAI key or the workshop. `account_key()` gives the account's saved key."""
+    effort = headers.get(EFFORT_HEADER, '').strip().lower()
+    if effort and effort not in REASONING_EFFORTS: raise ValueError('Unknown reasoning effort')
     provider = headers.get(PROVIDER_HEADER, '').strip()
-    if not provider: return replace(site, key=site.key if with_key else '')
+    if not provider: return replace(site, key=site.key if with_key else '', effort=effort if site.site else '')
     if provider not in (*PROVIDERS, 'chatgpt'): raise ValueError('Unknown model provider')
     if provider == 'workshop': return WORKSHOP
     model = headers.get(MODEL_HEADER, '').strip()
@@ -56,16 +67,20 @@ def from_headers(headers, with_key=False, site=WORKSHOP):
     if provider == 'openai' and site.site:
         # The deployment's OpenAI API key runs every OpenAI chat; the browser picks only an offered model.
         offered = any(m['id'] == model for m in OPENAI_MODELS)
-        return replace(site, model=model if offered else site.model, key=site.key if with_key else '')
+        return replace(site, model=model if offered else site.model, key=site.key if with_key else '', effort=effort)
     if provider == 'chatgpt':
         # The token stays on the server; the caller resolves it from the browser's sign-in cookie.
         if with_key and not model: raise ValueError('Choose a ChatGPT model in Integrations, then try again.')
-        return Connection('chatgpt', model)
+        return Connection('chatgpt', model, effort=effort)
+    if provider == 'claude' and headers.get(ACCOUNT_HEADER) == '1':
+        key = (account_key() if account_key else '') if with_key else ''
+        if with_key and not key: raise ValueError(NO_ACCOUNT_KEY)
+        return Connection('claude', model, key, account=True)
     key = headers.get(KEY_HEADER, '').strip() if with_key else ''
     if len(key) > 300: raise ValueError('API key is too long')
     if with_key and not key: raise ValueError(NO_KEY)
     if with_key and provider == 'openai' and not model: raise ValueError('Choose an OpenAI model in Integrations, then try again.')
-    return Connection(provider, model, key)
+    return Connection(provider, model, key, effort=effort if provider == 'openai' else '')
 
 
 @contextmanager

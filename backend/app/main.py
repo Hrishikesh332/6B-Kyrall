@@ -29,7 +29,8 @@ from .mesh_samples import MeshSamples
 from .connections import NAMES, ConnectionCheck, ConnectionInput, Connections, ModelChoice
 from .config import CONNECTION, USER
 from .firebase import SESSION_COOKIE, SESSION_TTL, CloudSync, Firebase, SignInError
-from .credentials import WORKSHOP, Connection, from_headers, verify
+from .credentials import NO_ACCOUNT_KEY, PROVIDER_HEADER, WORKSHOP, Connection, from_headers, verify
+from .account_keys import AccountKeyInput, AccountKeys
 from .chatgpt import COOKIE as CHATGPT_COOKIE, HOSTED_CALLBACK, LOCAL_CALLBACK, PLAN_SCOPE, ChatGPT, ChatGPTError
 from .onshape import BrowserCredentials, CredentialStore, OnshapeClient, OnshapeCredentials, OnshapeError, OnshapeExport, OnshapeImport, export_step, import_element, ID as ONSHAPE_ID
 
@@ -187,12 +188,26 @@ def create_app(settings=None,provider=None,firebase=None):
     # Hosted with OPENAI_API_KEY set: the deployment's own key runs every OpenAI chat, and
     # browsers that bring no connection of their own start on it.
     site=Connection('openai',settings.model,settings.api_key,site=True) if settings.hosted and settings.api_key else WORKSHOP
+    # Hosted with Google sign-in: each account can save its Claude key to itself, for every device.
+    account_keys=app.state.account_keys=AccountKeys(firebase.database() if settings.hosted and firebase.sign_in else None,
+                                                    settings.account_key_secret or (getattr(firebase,'info',None) or {}).get('private_key',''))
+
+    def default_connection(with_key=False):
+        """For a browser that brings no connection: the account's saved Claude key, else the site's."""
+        record=account_keys.record(account())
+        if not record: return site
+        key=account_keys.key(account()) if with_key else ''
+        # A record this server cannot decrypt (its secret changed) must be saved again.
+        if with_key and not key: raise ValueError(NO_ACCOUNT_KEY)
+        return Connection('claude',record.get('model',''),key,account=True)
 
     @app.before_request
     def browser_connection():
         # Hosted: answer as this browser's provider and model (never its key) for the request.
         if settings.hosted and request.path.startswith('/api/'):
-            g.connection_token=CONNECTION.set(from_headers(request.headers,site=site).fields(with_key=False))
+            # No provider sent: a new device of a signed-in account starts on its saved Claude key.
+            start=default_connection() if not request.headers.get(PROVIDER_HEADER,'').strip() else site
+            g.connection_token=CONNECTION.set(from_headers(request.headers,site=start).fields(with_key=False))
 
     @app.teardown_request
     def forget_browser_connection(_exc):
@@ -204,14 +219,15 @@ def create_app(settings=None,provider=None,firebase=None):
     def keep_key(task_id):
         """Hosted: hold this browser's connection, with its key, for the task's next run."""
         if not settings.hosted: return
-        connection=from_headers(request.headers,with_key=True,site=site)
+        start=default_connection(True) if not request.headers.get(PROVIDER_HEADER,'').strip() else site
+        connection=from_headers(request.headers,with_key=True,site=start,account_key=lambda:account_keys.key(account()))
         if connection.provider=='chatgpt':
             # The ChatGPT token never leaves the server; the browser's sign-in cookie selects it.
             record=chatgpt.fresh(request.cookies.get(CHATGPT_COOKIE,''))
             if not record: raise ValueError('Continue with ChatGPT in Integrations, then try again.')
             if PLAN_SCOPE not in record.get('scopes',[]):
                 raise ValueError('Using your ChatGPT plan was not allowed during sign-in. Continue with ChatGPT again and allow it, or use an API key.')
-            connection=Connection('chatgpt',connection.model,record['access_token'])
+            connection=Connection('chatgpt',connection.model,record['access_token'],effort=connection.effort)
         engine.keys.put(task_id,connection)
 
     def hosted_off(feature):
@@ -356,7 +372,35 @@ def create_app(settings=None,provider=None,firebase=None):
     app.register_error_handler(OnshapeError,lambda exc:(jsonify(detail=str(exc)),502 if 'reached' in str(exc) else 422))
 
     @app.get('/api/integrations/model')
-    def model_connection(): return connections.overview()
+    def model_connection():
+        overview=connections.overview()
+        if settings.hosted:
+            for item in overview['providers']:
+                if item['id']=='claude': item['account_key']=account_keys.status(account())
+        return overview
+
+    def own_account_keys():
+        if not (settings.hosted and account_keys.available): raise HTTPException(404,'Saving keys to your account is not set up on this server')
+        if not account(): raise HTTPException(401,'Sign in with Google to save your key to your account.')
+        return account()
+
+    @app.put('/api/integrations/model/account-key')
+    def account_key_save(data:AccountKeyInput):
+        uid=own_account_keys()
+        if data.api_key.strip():
+            check=asyncio.run(verify('claude',data.model,data.api_key,app.state.model_transport))
+            if not check['ok']: raise HTTPException(422,check['message'])
+        try: return account_keys.save(uid,data.api_key.strip(),data.model)
+        except ValueError: raise
+        except Exception as exc:  # noqa: BLE001 - the database is unreachable; nothing was saved
+            raise HTTPException(502,'Could not save the key to your Google account; try again.') from exc
+
+    @app.delete('/api/integrations/model/account-key')
+    def account_key_forget():
+        uid=own_account_keys()
+        try: return account_keys.forget(uid)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502,'Could not remove the key from your Google account; try again.') from exc
 
     @app.get('/api/integrations/model/models')
     def model_choices():
@@ -370,7 +414,7 @@ def create_app(settings=None,provider=None,firebase=None):
     @app.put('/api/integrations/model/choice')
     def model_choose(data:ModelChoice):
         hosted_off('Server-wide model connections'); admin_only('the model connection')
-        return connections.choose(data.model)
+        return connections.choose(data.model,data.effort)
 
     @app.post('/api/integrations/model/check')
     def model_connection_check(data:ConnectionCheck):

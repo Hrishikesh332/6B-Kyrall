@@ -58,6 +58,9 @@ export function connectionHeaders(path, method = "GET") {
   if (model?.provider) {
     headers["X-6B-Provider"] = model.provider;
     if (model.model) headers["X-6B-Model"] = model.model;
+    if (model.effort) headers["X-6B-Effort"] = model.effort;
+    // The key saved to the signed-in Google account; the browser never holds it.
+    if (model.account) headers["X-6B-Account-Key"] = "1";
     if (model.key && method !== "GET" && RUN_REQUEST.test(path.split("?")[0]))
       headers["X-6B-Key"] = model.key;
   }

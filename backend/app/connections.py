@@ -13,7 +13,7 @@ import shutil
 import time
 from typing import Literal
 from pydantic import Field
-from .config import CLAUDE_MODELS as OFFERED_CLAUDE_MODELS, MODEL_PROVIDERS, OPENAI_MODELS as OFFERED_OPENAI_MODELS, PROVIDERS
+from .config import CLAUDE_MODELS as OFFERED_CLAUDE_MODELS, MODEL_PROVIDERS, OPENAI_MODELS as OFFERED_OPENAI_MODELS, PROVIDERS, REASONING_EFFORTS
 from .models import StrictModel
 from .provider import ProviderError
 
@@ -31,6 +31,8 @@ class ConnectionInput(StrictModel):
 
 class ModelChoice(StrictModel):
     model: str = Field(default='', max_length=120, pattern=r'^[A-Za-z0-9._:\-\[\]/]*$')
+    # OpenAI only; None keeps the effort chosen before.
+    effort: Literal[REASONING_EFFORTS] | None = None
 
 
 class ConnectionCheck(StrictModel):
@@ -69,7 +71,7 @@ class Connections:
     def __init__(self, settings):
         self.settings, self.store = settings, ConnectionStore(settings.data_dir)
         # Values from backend/.env stay the fallback for anything not chosen in the app.
-        self.defaults = {'provider':settings.provider, 'model':settings.model,
+        self.defaults = {'provider':settings.provider, 'model':settings.model, 'reasoning_effort':settings.reasoning_effort,
                          'claude_model':settings.claude_model, 'anthropic_api_key':settings.anthropic_api_key}
         # Hosted: the deployment's own OPENAI_API_KEY runs OpenAI chats in place of a ChatGPT sign-in.
         self.site_key = settings.hosted and bool(settings.api_key)
@@ -84,24 +86,26 @@ class Connections:
         s.model = models.get(provider) or d['model'] if provider=='openai' else d['model']
         s.claude_model = models.get('claude') or d['claude_model']
         s.anthropic_api_key = d['anthropic_api_key'] or saved.get('anthropic_api_key', '')
+        s.reasoning_effort = saved.get('effort') if saved.get('effort') in REASONING_EFFORTS else d['reasoning_effort']
 
     def claude_models(self):
         """The Claude models 6B offers: Opus 5.5 and Sonnet 5.5, whatever else the account could use."""
         return [dict(m) for m in CLAUDE_MODELS]
 
-    def choose(self, model):
-        """Switch the active connection's model; the sign-in is unchanged, so no live check is needed."""
+    def choose(self, model, effort=None):
+        """Switch the active connection's model (and OpenAI reasoning effort); the sign-in is unchanged, so no live check is needed."""
         s = self.settings
         if s.provider not in MODEL_PROVIDERS: raise ValueError('The local workshop has no model to choose')
         offered(s.provider, model)
         saved = self.store.load()
         saved.update(provider=s.provider, models={**saved.get('models',{}), s.provider:model}, changed_at=time.time())
+        if effort: saved['effort'] = effort
         self.store.save(saved)
         self.apply(saved)
         return self.overview()
 
     def source(self):
-        if self.settings.hosted: return 'site' if self.settings.site_key else 'browser'
+        if self.settings.hosted: return 'site' if self.settings.site_key else 'account' if self.settings.account_key else 'browser'
         return 'workspace' if self.store.load().get('provider') in PROVIDERS else 'environment'
 
     def overview(self):

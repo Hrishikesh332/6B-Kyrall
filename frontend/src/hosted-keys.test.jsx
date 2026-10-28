@@ -107,6 +107,57 @@ describe("hosted keys", () => {
     expect(last["x-6b-key"]).toBeUndefined();
   });
 
+  it("saves Claude's key to the Google account, keeping none in the browser", async () => {
+    const user = userEvent.setup(),
+      calls = [];
+    let saved = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      const path = String(url),
+        method = init?.method || "GET";
+      calls.push([path, method, init?.body, headersOf(init)]);
+      if (path.endsWith("/integrations/model/account-key")) saved = method === "PUT";
+      const body = overview(headersOf(init));
+      body.providers[0].account_key = {
+        available: true,
+        saved,
+        hint: saved ? "mine" : "",
+        model: saved ? "sonnet" : "",
+      };
+      if (headersOf(init)["x-6b-account-key"]) body.active.source = "account";
+      return new Response(
+        JSON.stringify(path.endsWith("/account-key") ? body.providers[0].account_key : body),
+        { status: 200 },
+      );
+    });
+    render(<ModelConnection onClose={() => {}} />);
+    await user.type(
+      await screen.findByLabelText("Anthropic API key"),
+      "sk-ant-mine",
+    );
+    await user.selectOptions(screen.getByLabelText("Model"), "sonnet");
+    await user.click(screen.getByRole("button", { name: "Use Claude Code" }));
+    await waitFor(() =>
+      expect(savedConnection(MODEL_CONNECTION)).toEqual({
+        provider: "claude",
+        model: "sonnet",
+        account: true,
+      }),
+    );
+    const put = calls.find(([p, m]) => p.endsWith("/account-key") && m === "PUT");
+    expect(JSON.parse(put[2])).toEqual({ api_key: "sk-ant-mine", model: "sonnet" });
+    expect(
+      await screen.findByText(/your key, saved to your Google account/),
+    ).toBeTruthy();
+    expect(
+      screen.getByPlaceholderText("Saved to your Google account · …mine"),
+    ).toBeTruthy();
+    expect(connectionHeaders("/tasks", "POST")).toEqual({
+      "X-6B-Provider": "claude",
+      "X-6B-Model": "sonnet",
+      "X-6B-Account-Key": "1",
+    });
+  });
+
   it("sends the key only with requests that start a run", () => {
     saveConnection(MODEL_CONNECTION, {
       provider: "openai",

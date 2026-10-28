@@ -707,6 +707,7 @@ export default function App() {
                       {...common}
                       id={route.slice(5)}
                       cap={cap}
+                      onModelChange={refreshCap}
                       onTaskChange={onTaskChange}
                       onConnection={setConnected}
                     />
