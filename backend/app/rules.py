@@ -3,7 +3,10 @@
 A rule with no `applies_when` is general and always binding. Rules sharing a
 `rule_set` with an `applies_when` description are conditional: for each task the
 agent decides (with a reason) whether the set applies, or asks the user when it
-cannot tell. Applied rules are binding and each "must" rule gets a recorded check.
+cannot tell. A set made from a template starts from the template's default instead
+(FDM printing on, the Kyrall challenge off), so the agent never has to ask about it;
+the user can switch it per chat. Applied rules are binding and each "must" rule gets
+a recorded check.
 """
 import time
 from typing import Literal
@@ -22,6 +25,7 @@ TEMPLATES = {
         'applies_when': 'Designing a gripper, gripper finger, suction cup or end effector for the Kyrall hackathon '
                         'or the Franka arm pick-and-place task (ripe tomato, slippery cylinder, flat plate).',
         'source': 'Kyrall Hackathon Challenge: Robot Gripper (brief PDF)',
+        'default': False,
         'rules': [
             ('must', 'Actuation is purely mechanical: no electronics, motors or electrical actuation in the gripper.'),
             ('must', 'Mounts on the Franka robotic arm used at the event; verify the flange interface against the official '
@@ -47,6 +51,7 @@ TEMPLATES = {
         'name': 'FDM 3D printing',
         'applies_when': 'Parts that will be 3D printed on an FDM printer (for example a Bambu Lab printer).',
         'source': '6B printing guidance',
+        'default': True,
         'rules': [
             ('must', 'Every part fits the print bed in its chosen print orientation.'),
             ('must', 'No feature thinner than 0.8 mm; structural walls at least 1.2 mm.'),
@@ -57,6 +62,8 @@ TEMPLATES = {
         ],
     },
 }
+# Rule set name -> whether a chat follows it until someone decides otherwise.
+DEFAULTS = {t['name']: t['default'] for t in TEMPLATES.values()}
 
 
 class RuleChoice(StrictModel):
@@ -144,6 +151,11 @@ def task_rules(db, task_id):
     for name, entry in sets.items():
         conditional = bool(name and entry['applies_when'])
         decision = decisions.get(name)
+        if not decision and conditional and name in DEFAULTS:
+            on = DEFAULTS[name]
+            decision = {'applied': on, 'decided_by': 'default', 'decided_at': None,
+                        'reason': 'On by default for every chat' if on else
+                                  'Off by default; choose Apply here to follow it in this chat'}
         entry['conditional'] = conditional
         entry['status'] = ('applied' if decision['applied'] else 'skipped') if decision else \
             ('pending' if conditional else 'always')

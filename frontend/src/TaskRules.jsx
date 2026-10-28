@@ -18,14 +18,20 @@ const CHECK = {
 };
 
 const statusLabel = (set) =>
-  ({
-    always: "Always applies",
-    applied:
-      set.decision?.decided_by === "user" ? "Applied by you" : "Applied by 6B",
-    skipped:
-      set.decision?.decided_by === "user" ? "Skipped by you" : "Not needed",
-    pending: "Needs a decision",
-  })[set.status];
+  set.decision?.decided_by === "default"
+    ? set.status === "applied"
+      ? "On by default"
+      : "Off by default"
+    : {
+        always: "Always applies",
+        applied:
+          set.decision?.decided_by === "user"
+            ? "Applied by you"
+            : "Applied by 6B",
+        skipped:
+          set.decision?.decided_by === "user" ? "Skipped by you" : "Not needed",
+        pending: "Needs a decision",
+      }[set.status];
 
 // Which rule sets this task follows, why, and how the design meets each rule.
 export default function TaskRules({ task, notify }) {
