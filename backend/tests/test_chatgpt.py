@@ -204,3 +204,26 @@ def test_tokens_refresh_before_they_expire_and_sign_out_revokes(hosted, openai):
     # The registration is kept so the next sign-in reuses it instead of registering again.
     query = parse_qs(urlparse(client.post('/api/integrations/chatgpt/start', base_url=LOCAL).get_json()['url']).query)
     assert query['client_id'] == ['oaiapp_123'] and query['login_hint'] == ['ada@example.com']
+
+
+@pytest.mark.asyncio
+async def test_with_a_site_key_visitors_can_still_run_on_their_own_plan(tmp_path, openai):
+    site = 'https://6b.up.railway.app'
+    def openai_item(app, base_url=site):
+        return next(p for p in app.test_client().get('/api/integrations/model', base_url=base_url).get_json()['providers'] if p['id'] == 'openai')
+    # Not approved by OpenAI yet: only the site's key is offered.
+    unapproved = create_app(Settings(data_dir=tmp_path/'a', hosted=True, api_key='SITE-KEY', api_token='', worker_enabled=False,
+                                     allowed_hosts=('.up.railway.app',)))
+    assert openai_item(unapproved)['site_key'] and openai_item(unapproved)['chatgpt_sign_in'] is False
+    app = create_app(Settings(data_dir=tmp_path/'b', hosted=True, api_key='SITE-KEY', api_token='', worker_enabled=False,
+                              chatgpt_client_id='oaiapp_123', allowed_hosts=('.up.railway.app',)))
+    app.state.chatgpt.transport = httpx.MockTransport(openai.handler)
+    app.state.engine.provider = ResponsesProvider(app.state.settings, httpx.MockTransport(openai.handler))
+    assert openai_item(app)['chatgpt_sign_in'] is True
+    client, _, _ = sign_in(app, openai)
+    openai.responses = [(200, completed({'type':'message', 'id':'msg_1', 'role':'assistant', 'content':[{'type':'output_text', 'text':'Done.'}]}))]
+    made = client.post('/api/tasks', json={'prompt':'Design a 40 mm bracket'}, headers={'X-6B-Provider':'chatgpt', 'X-6B-Model':'gpt-plan'}, base_url=LOCAL)
+    assert made.status_code == 201, made.get_json()
+    await app.state.engine.run(app.state.db.claim())
+    # The visitor's plan pays, never the site's key.
+    assert openai.requests and all(r['auth'] == 'Bearer ACCESS-SECRET-1' for r in openai.requests)

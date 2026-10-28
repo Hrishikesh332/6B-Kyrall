@@ -115,7 +115,8 @@ describe("hosted keys", () => {
       const path = String(url),
         method = init?.method || "GET";
       calls.push([path, method, init?.body, headersOf(init)]);
-      if (path.endsWith("/integrations/model/account-key")) saved = method === "PUT";
+      if (path.endsWith("/integrations/model/account-key"))
+        saved = method === "PUT";
       const body = overview(headersOf(init));
       body.providers[0].account_key = {
         available: true,
@@ -125,7 +126,9 @@ describe("hosted keys", () => {
       };
       if (headersOf(init)["x-6b-account-key"]) body.active.source = "account";
       return new Response(
-        JSON.stringify(path.endsWith("/account-key") ? body.providers[0].account_key : body),
+        JSON.stringify(
+          path.endsWith("/account-key") ? body.providers[0].account_key : body,
+        ),
         { status: 200 },
       );
     });
@@ -143,8 +146,13 @@ describe("hosted keys", () => {
         account: true,
       }),
     );
-    const put = calls.find(([p, m]) => p.endsWith("/account-key") && m === "PUT");
-    expect(JSON.parse(put[2])).toEqual({ api_key: "sk-ant-mine", model: "sonnet" });
+    const put = calls.find(
+      ([p, m]) => p.endsWith("/account-key") && m === "PUT",
+    );
+    expect(JSON.parse(put[2])).toEqual({
+      api_key: "sk-ant-mine",
+      model: "sonnet",
+    });
     expect(
       await screen.findByText(/your key, saved to your Google account/),
     ).toBeTruthy();
@@ -335,5 +343,43 @@ describe("hosted keys", () => {
     ).toBeNull();
     // On the web ChatGPT connects only through its sign-in: no API key to fall back on.
     expect(screen.queryByLabelText("OpenAI API key")).toBeNull();
+  });
+
+  it("offers the visitor's own ChatGPT plan beside the site's key once approved", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      const path = String(url);
+      const base = overview(headersOf(init));
+      const body = path.endsWith("/integrations/chatgpt")
+        ? { available: true, signed_in: false }
+        : {
+            ...base,
+            active: {
+              provider: "openai",
+              name: "OpenAI API",
+              source: "site",
+              model: "gpt-6.1-terra",
+            },
+            providers: base.providers.map((p) =>
+              p.id === "openai"
+                ? {
+                    ...p,
+                    active: true,
+                    site_key: true,
+                    chatgpt_sign_in: true,
+                    model: "gpt-6.1-terra",
+                    models: [{ id: "gpt-6.1-terra", name: "GPT-6.1 Terra" }],
+                  }
+                : p,
+            ),
+          };
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    render(<ModelConnection onClose={() => {}} initialProvider="openai" />);
+    expect(
+      await screen.findByText("Runs on this site’s OpenAI API key."),
+    ).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: /Continue with ChatGPT/ }),
+    ).toBeTruthy();
   });
 });

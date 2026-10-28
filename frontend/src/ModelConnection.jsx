@@ -89,18 +89,38 @@ export default function ModelConnection({
                 // On the web, OpenAI runs on this site's own key when it has one, or else
                 // only through ChatGPT's sign-in.
                 provider.site_key ? (
-                  <SiteKeySetup
-                    provider={provider}
-                    inUse={overview.active.source === "site"}
-                    onConnected={async (next) => {
-                      setOverview(next);
-                      await onChanged?.();
-                      notify?.(
-                        `${next.active.name} is now running your chats.`,
-                      );
-                    }}
-                    onClose={onClose}
-                  />
+                  <>
+                    <SiteKeySetup
+                      provider={provider}
+                      inUse={overview.active.source === "site"}
+                      onConnected={async (next) => {
+                        setOverview(next);
+                        await onChanged?.();
+                        notify?.(
+                          `${next.active.name} is now running your chats.`,
+                        );
+                      }}
+                      onClose={onClose}
+                    />
+                    {/* Once OpenAI approves this website, visitors may use their own plan instead. */}
+                    {provider.chatgpt_sign_in && (
+                      <>
+                        <p className="setup-line">
+                          Or use your own ChatGPT plan:
+                        </p>
+                        <ChatGPTPlan
+                          signInError={signInError}
+                          onConnected={async (next) => {
+                            setOverview(next);
+                            await onChanged?.();
+                            notify?.(
+                              `${next.active.name} is now running your chats.`,
+                            );
+                          }}
+                        />
+                      </>
+                    )}
+                  </>
                 ) : provider.id === "openai" ? (
                   <ChatGPTPlan
                     signInError={signInError}
@@ -164,14 +184,14 @@ function ActiveSummary({ active }) {
             : active.source === "account"
               ? "your key, saved to your Google account"
               : active.source === "browser"
-              ? active.provider === "workshop"
-                ? "no key connected in this browser"
-                : active.plan
-                  ? "signed in with ChatGPT"
-                  : "your key, saved in this browser"
-              : active.source === "workspace"
-                ? "chosen in this workspace"
-                : "from backend/.env"}
+                ? active.provider === "workshop"
+                  ? "no key connected in this browser"
+                  : active.plan
+                    ? "signed in with ChatGPT"
+                    : "your key, saved in this browser"
+                : active.source === "workspace"
+                  ? "chosen in this workspace"
+                  : "from backend/.env"}
         </span>
       </div>
       <span className="connection-status is-connected">
