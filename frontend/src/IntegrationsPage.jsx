@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Printer } from "lucide-react";
+import { Printer } from "lucide-react";
 import { api } from "./lib.js";
 import ProviderLogo from "./ProviderLogo.jsx";
 import { Dialog, PageHeading } from "./ui.jsx";
@@ -188,7 +188,7 @@ function IsaacDetails({ configured, onClose }) {
           </button>
           {configured && (
             <a className="primary" href="#tasks" onClick={onClose}>
-              Open projects <ArrowRight size={14} />
+              Open projects
             </a>
           )}
         </div>

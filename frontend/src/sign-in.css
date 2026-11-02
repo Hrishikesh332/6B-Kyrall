@@ -40,15 +40,15 @@
   justify-content: center;
   gap: 12px;
   padding: 10px 16px;
-  border: 1px solid #dadce0;
+  border: 1px solid var(--c-dadce0);
   border-radius: 6px;
-  background: #fff;
-  color: #1f1f1f;
+  background: var(--gray-ff);
+  color: var(--gray-1f);
   font-size: 14px;
   font-weight: 500;
 }
 .google-button:hover:not(:disabled) {
-  background: #f2f2f2;
+  background: var(--gray-f2);
 }
 .google-button:disabled {
   opacity: 0.7;
@@ -60,7 +60,7 @@
 .profile-avatar.initial {
   display: grid;
   place-items: center;
-  background: #2a3a14;
+  background: var(--c-2a3a14);
   color: var(--accent-text);
   font-weight: 600;
   font-size: 13px;
@@ -84,15 +84,15 @@
   align-items: center;
   gap: 8px;
   padding: 4px 10px 4px 4px;
-  border: 1px solid #2c2c2c;
+  border: 1px solid var(--gray-2c);
   border-radius: 999px;
-  background: #141414;
-  color: #d4d4d4;
+  background: var(--gray-14);
+  color: var(--gray-d4);
   font-size: 12.5px;
   max-width: 200px;
 }
 .topbar-account.signed-in:hover {
-  background: #1d1d1d;
+  background: var(--gray-1d);
 }
 .topbar-account.signed-in .profile-avatar {
   width: 26px;

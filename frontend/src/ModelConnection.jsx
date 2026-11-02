@@ -1,12 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  ArrowUpRight,
-  Check,
-  Copy,
-  KeyRound,
-  RefreshCw,
-  Unplug,
-} from "lucide-react";
+import { Check, Copy, KeyRound, RefreshCw, Unplug } from "lucide-react";
 import {
   MODEL_CONNECTION,
   api,
@@ -281,7 +274,7 @@ function ProviderSetup({ provider, onConnected, onKeyRemoved, onClose }) {
         <p className="setup-line">
           Install {provider.name} first.{" "}
           <a href={provider.install} target="_blank" rel="noreferrer">
-            Install guide <ArrowUpRight size={12} />
+            Install guide
           </a>
         </p>
       ) : (
@@ -472,7 +465,7 @@ function ChatGPTPlan({ onConnected, signInError }) {
           <p className="setup-line">
             Signed in with ChatGPT{status.email ? ` as ${status.email}` : ""}.{" "}
             <a href={status.usage_url} target="_blank" rel="noreferrer">
-              Manage usage <ArrowUpRight size={12} />
+              Manage usage
             </a>
           </p>
           {!status.plan_usage ? (
@@ -697,7 +690,7 @@ function BrowserKeySetup({ provider, onConnected, onClose }) {
       <p className="setup-line">
         Use your own key.{" "}
         <a href={keysPage} target="_blank" rel="noreferrer">
-          Create a key <ArrowUpRight size={12} />
+          Create a key
         </a>
       </p>
       <label className="export-field">

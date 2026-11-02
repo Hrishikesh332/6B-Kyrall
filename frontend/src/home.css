@@ -19,18 +19,18 @@
   font-weight: 450;
   line-height: 1.2;
   letter-spacing: -1px;
-  color: #ececec;
+  color: var(--gray-ec);
 }
 
 .home .composer {
-  background: #1f1f1f;
-  border: 1px solid #2f2f2f;
+  background: var(--gray-1f);
+  border: 1px solid var(--gray-2f);
   border-radius: 18px;
-  box-shadow: 0 10px 40px #0000004d;
+  box-shadow: 0 10px 40px var(--c-0000004d);
   transition: border-color 0.15s;
 }
 .home .composer:focus-within {
-  border-color: #4a4a4a;
+  border-color: var(--gray-4a);
 }
 .home .composer textarea {
   min-height: 96px;
@@ -40,7 +40,7 @@
   resize: none;
 }
 .home .composer textarea::placeholder {
-  color: #7a7a7a;
+  color: var(--gray-7a);
 }
 .home .composer-footer {
   border-top: 0;
@@ -52,13 +52,13 @@
   background-color: transparent;
   border-color: transparent;
   border-radius: 8px;
-  color: #a3a3a3;
+  color: var(--gray-a3);
   font-size: 12px;
 }
 .home .context-controls select:hover,
 .home .model-picker select:hover {
-  background-color: #2a2a2a;
-  color: #dcdcdc;
+  background-color: var(--gray-2a);
+  color: var(--gray-dc);
 }
 .home .send {
   height: 34px;
@@ -67,8 +67,8 @@
   font-size: 13px;
 }
 .home .send:disabled {
-  background: #2c2c2c;
-  color: #777;
+  background: var(--gray-2c);
+  color: var(--gray-77);
   opacity: 1;
 }
 
@@ -85,20 +85,20 @@
   gap: 7px;
   height: 32px;
   padding: 0 13px;
-  border: 1px solid #2f2f2f;
+  border: 1px solid var(--gray-2f);
   border-radius: 999px;
-  color: #a3a3a3;
+  color: var(--gray-a3);
   font-size: 12px;
   transition:
     background 0.15s,
     color 0.15s;
 }
 .home-chips button:hover {
-  background: #242424;
-  color: #e6e6e6;
+  background: var(--gray-24);
+  color: var(--gray-e6);
 }
 .home-chips svg {
-  color: #7d7d7d;
+  color: var(--gray-7d);
 }
 .home-chips .provider-logo.is-plate {
   padding: 2px;
@@ -118,14 +118,14 @@
   margin: 0;
   font-size: 12px;
   font-weight: 450;
-  color: #8a8a8a;
+  color: var(--gray-8a);
 }
 .home-recents-heading a {
   font-size: 12px;
-  color: #8a8a8a;
+  color: var(--gray-8a);
 }
 .home-recents-heading a:hover {
-  color: #e6e6e6;
+  color: var(--gray-e6);
 }
 .home-recent {
   display: flex;
@@ -137,10 +137,10 @@
   border-radius: 10px;
   text-align: left;
   font-size: 13px;
-  color: #d4d4d4;
+  color: var(--gray-d4);
 }
 .home-recent:hover {
-  background: #222;
+  background: var(--gray-22);
 }
 .home-recent-title {
   flex: 1;
@@ -156,7 +156,7 @@
   min-width: 64px;
   text-align: right;
   font-size: 12px;
-  color: #7d7d7d;
+  color: var(--gray-7d);
 }
 
 @media (max-width: 760px) {
@@ -177,6 +177,11 @@
   .home .model-picker {
     min-width: 0;
   }
+  /* The context picker's longest option leaves it spare width; the model name has none. */
+  .home .model-picker {
+    flex-shrink: 0;
+  }
+
   .home .context-controls select,
   .home .model-picker select {
     width: 100%;

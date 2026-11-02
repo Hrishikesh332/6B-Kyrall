@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import {} from "lucide-react";
 import { runSummary } from "./execution.js";
 
 export default function ExecutionSummary({ task, audit, onOpen }) {
@@ -25,9 +25,7 @@ export default function ExecutionSummary({ task, audit, onOpen }) {
               : `${summary.total} tool ${summary.total === 1 ? "call" : "calls"}${sources ? ` · ${sources} ${sources === 1 ? "source" : "sources"}` : ""}${summary.failed ? ` · ${summary.failed} failed ${summary.failed === 1 ? "attempt" : "attempts"}` : ""}`}
         </span>
       </span>
-      <span className="execution-summary-link">
-        Details <ChevronRight size={15} />
-      </span>
+      <span className="execution-summary-link">Details</span>
     </button>
   );
 }

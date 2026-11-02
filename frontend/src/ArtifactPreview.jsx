@@ -61,7 +61,7 @@ import PrintabilityPanel from "./PrintabilityPanel.jsx";
 import VersionCompare from "./VersionCompare.jsx";
 import ViewCube from "./ViewCube.jsx";
 import { cubeTransform } from "./viewCube.js";
-import { Empty, ErrorNotice, IconButton, Loading } from "./ui.jsx";
+import { Clamp, Empty, ErrorNotice, IconButton, Loading } from "./ui.jsx";
 
 export default function ArtifactPreview({
   taskId,
@@ -493,7 +493,7 @@ export default function ArtifactPreview({
             <span>{size(a.size)}</span>
             <span>{date(a.created_at)}</span>
             <a href={`#task=${encodeURIComponent(taskId)}`} onClick={onClose}>
-              Open project <ChevronRight size={12} />
+              Open project
             </a>
           </footer>
         </>
@@ -1171,23 +1171,27 @@ export function MeshPreview({
               decisions.map((d) => (
                 <article key={d.key || d.title}>
                   <strong>{d.title}</strong>
-                  <p>{d.summary}</p>
-                  {d.tradeoffs?.length > 0 && (
-                    <ul>
-                      {d.tradeoffs.map((t) => (
-                        <li key={t}>{t}</li>
-                      ))}
-                    </ul>
-                  )}
-                  {d.uncertainties?.length > 0 && (
-                    <p className="inspector-open">
-                      Open: {d.uncertainties.join(" · ")}
-                    </p>
-                  )}
+                  <Clamp lines={5}>
+                    <p>{d.summary}</p>
+                    {d.tradeoffs?.length > 0 && (
+                      <ul>
+                        {d.tradeoffs.map((t) => (
+                          <li key={t}>{t}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {d.uncertainties?.length > 0 && (
+                      <p className="inspector-open">
+                        Open: {d.uncertainties.join(" · ")}
+                      </p>
+                    )}
+                  </Clamp>
                 </article>
               ))
             ) : (
-              <p className="inspector-summary-text">{notes.summary}</p>
+              <Clamp lines={6}>
+                <p className="inspector-summary-text">{notes.summary}</p>
+              </Clamp>
             )}
           </section>
         )}

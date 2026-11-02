@@ -61,7 +61,8 @@ export function mountViewer(
     [0.74, 0.7, 0.78],
     [0.7, 0.77, 0.72],
   ];
-  const accent = [0.56, 0.8, 0.2];
+  // Hover and selection brighten towards a neutral white; the stage has no accent colour.
+  const accent = [0.9, 0.92, 0.95];
   const ROTATE = `vec3 rotate(vec3 w){float c=cos(rotation.x),s=sin(rotation.x),a=cos(rotation.y),b=sin(rotation.y);
     float z1=s*w.x-c*w.y;return vec3(c*w.x+s*w.y,a*w.z-b*z1,b*w.z+a*z1);}`;
   const UNIFORMS = `uniform vec3 center;uniform float span;uniform vec2 rotation;uniform float scale;uniform float aspect;`;
@@ -78,16 +79,16 @@ export function mountViewer(
     vec3 c=base*(hemi*.42+key*.62+fill*.14)+spec+rim*(.07+glow*.22)*mix(vec3(1.),vec3(${accent.join(",")}),glow);
     gl_FragColor=vec4(c*alpha,alpha);}`;
   const derivatives = gl.getExtension("OES_standard_derivatives");
-  // One quad for the fading grid, then one soft rounded-rectangle contact
-  // shadow per part, blurring and lightening as the part rises off the floor.
+  // One quad for the fading grid, then one soft elliptical contact shadow per
+  // part, blurring and lightening as the part rises off the floor.
   const groundVertex = `attribute vec2 corner;uniform float level;uniform vec2 quadCenter;uniform vec2 quadHalf;${UNIFORMS}
     varying vec2 vWorld;varying float vRadius;${ROTATE}
     void main(){vec3 world=vec3(quadCenter+corner*quadHalf,level);vWorld=world.xy;vRadius=length(corner);${project}}`;
   const groundFragment = `${derivatives ? "#extension GL_OES_standard_derivatives : enable\n#define GRID\n" : ""}precision mediump float;
     varying vec2 vWorld;varying float vRadius;uniform float mode;uniform vec2 footCenter;uniform vec2 footHalf;
     uniform float blur;uniform float strength;uniform float cell;uniform float opacity;
-    void main(){if(mode>.5){vec2 q=abs(vWorld-footCenter)-footHalf;float d=length(max(q,0.))+min(max(q.x,q.y),0.);
-    float s=(1.-smoothstep(-blur*.6,blur,d))*strength;gl_FragColor=vec4(0.,0.,0.,s*opacity);return;}
+    void main(){if(mode>.5){float r=length((vWorld-footCenter)/(footHalf+blur));
+    float f=max(1.-r,0.);float s=f*f*strength;gl_FragColor=vec4(0.,0.,0.,s*opacity);return;}
     float grid=0.;
     #ifdef GRID
     vec2 g=vWorld/cell;vec2 w=abs(fract(g-.5)-.5)/fwidth(g);grid=(1.-min(min(w.x,w.y),1.))*.09;
@@ -279,7 +280,7 @@ export function mountViewer(
       gl.uniform1f(u.blur, blur);
       gl.uniform1f(
         u.strength,
-        0.42 * part.fade * Math.exp(-height / (span * 0.45)),
+        0.32 * part.fade * Math.exp(-height / (span * 0.45)),
       );
       gl.uniform2f(u.quadCenter, x, y);
       gl.uniform2f(u.quadHalf, halfX + blur * 1.2, halfY + blur * 1.2);

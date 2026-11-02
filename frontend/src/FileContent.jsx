@@ -1,12 +1,5 @@
 import { useState } from "react";
-import {
-  ArrowRight,
-  ExternalLink,
-  FileArchive,
-  Maximize,
-  Minus,
-  Plus,
-} from "lucide-react";
+import { FileArchive, Maximize, Minus, Plus } from "lucide-react";
 import { renderText } from "../format.js";
 import { size } from "./lib.js";
 import { csvPreview, extensionOf } from "./filePresentation.js";
@@ -170,7 +163,6 @@ export function PackageContent({ file, taskId, onChange }) {
                   {size(entry.size)} · v{entry.version}
                 </small>
               </span>
-              <ArrowRight size={15} />
             </button>
           ))}
         </div>
@@ -199,7 +191,7 @@ export function BrowserFileContent({ url, file }) {
         target="_blank"
         rel="noopener noreferrer"
       >
-        <ExternalLink size={15} /> {pdf ? "Open PDF" : "Open media"}
+        {pdf ? "Open PDF" : "Open media"}
       </a>
     </div>
   );

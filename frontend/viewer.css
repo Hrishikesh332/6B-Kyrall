@@ -1,17 +1,35 @@
 /* Model studio: a full-bleed stage with floating glass controls. Loaded last so
    it supersedes the older stacked studio layout in studio.css. */
 :root {
-  --glass: rgb(30 30 30 / 0.78);
-  --glass-solid: rgb(30 30 30 / 0.94);
-  --glass-ring: 0 0 0 1px rgb(255 255 255 / 0.1);
+  --glass: var(--c-1e1e1ec7);
+  --glass-solid: var(--c-1e1e1ef0);
+  --glass-ring: 0 0 0 1px var(--c-ffffff1a);
   --glass-shadow:
-    0 0 0 1px rgb(255 255 255 / 0.1), 0 10px 30px rgb(0 0 0 / 0.35),
-    0 2px 6px rgb(0 0 0 / 0.25);
-  --chrome-text: rgb(255 255 255 / 0.86);
-  --chrome-muted: rgb(255 255 255 / 0.5);
-  --chrome-faint: rgb(255 255 255 / 0.32);
-  --chrome-hover: rgb(255 255 255 / 0.08);
+    0 0 0 1px var(--c-ffffff1a), 0 10px 30px var(--c-00000059),
+    0 2px 6px var(--c-00000040);
+  --chrome-text: var(--c-ffffffdb);
+  --chrome-muted: var(--c-ffffff80);
+  --chrome-faint: var(--c-ffffff52);
+  --chrome-hover: var(--c-ffffff14);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* 3D surfaces carry no accent colour: inside them the accent resolves to neutral
+   ink, so selections, sliders and passed checks read in black and white. */
+.model-studio,
+.pick-place,
+.compare-panes,
+.file-thumbnail {
+  --green: var(--stage-ink);
+  --accent-text: var(--stage-ink);
+}
+.model-studio .primary,
+.pick-place .primary {
+  background: var(--gray-f2);
+  color: var(--gray-00);
+}
+.model-studio .primary:hover:not(:disabled),
+.pick-place .primary:hover:not(:disabled) {
+  background: var(--gray-ff);
 }
 .sr-only {
   position: absolute;
@@ -34,13 +52,13 @@ dialog.preview-panel.has-model:not(.is-expanded) {
 }
 dialog.preview-panel.has-model {
   overflow: hidden;
-  border-color: #2e2e2e;
+  border-color: var(--gray-2e);
   border-radius: 16px;
-  background: #161616;
+  background: var(--gray-16);
 }
 .has-model .preview-header {
   padding: 12px 14px 12px 18px;
-  border-bottom: 1px solid #262626;
+  border-bottom: 1px solid var(--gray-26);
 }
 .has-model .preview-header .eyebrow {
   display: none;
@@ -56,7 +74,7 @@ dialog.preview-panel.has-model {
 }
 .has-model .preview-controls {
   padding: 8px 14px 8px 18px;
-  border-bottom: 1px solid #262626;
+  border-bottom: 1px solid var(--gray-26);
 }
 .has-model .preview-controls .secondary {
   min-height: 30px;
@@ -73,8 +91,8 @@ dialog.preview-panel.has-model {
 }
 .has-model .preview-meta {
   padding: 9px 18px;
-  border-top: 1px solid #262626;
-  color: #6f6f6f;
+  border-top: 1px solid var(--gray-26);
+  color: var(--gray-6f);
 }
 
 /* Stage */
@@ -98,9 +116,8 @@ dialog.preview-panel.has-model {
   overflow: hidden;
   background: radial-gradient(
     120% 85% at 50% 38%,
-    #2a2a2a 0%,
-    #1d1d1d 52%,
-    #151515 100%
+    var(--stage-bg-center) 0%,
+    var(--stage-bg) 70%
   );
   box-shadow: none;
 }
@@ -119,11 +136,11 @@ dialog.preview-panel.has-model {
   cursor: pointer;
 }
 .model-studio .mesh-viewer canvas:focus-visible {
-  outline: 2px solid rgb(118 185 0 / 0.6);
+  outline: 2px solid var(--c-a2a2a299);
   outline-offset: -2px;
 }
 .model-studio .mesh-viewer.is-recording {
-  box-shadow: inset 0 0 0 1px #6b3530;
+  box-shadow: inset 0 0 0 1px var(--c-6b3530);
 }
 .model-studio .mesh-viewer .error-notice {
   position: absolute;
@@ -158,8 +175,8 @@ dialog.preview-panel.has-model {
   transform: translateX(-50%);
   padding: 5px 11px;
   border-radius: 999px;
-  background: rgb(60 20 18 / 0.85);
-  box-shadow: 0 0 0 1px rgb(229 83 75 / 0.35);
+  background: var(--c-3c1412d9);
+  box-shadow: 0 0 0 1px var(--c-e5534b59);
 }
 
 /* Floating chrome */
@@ -230,7 +247,7 @@ dialog.preview-panel.has-model {
   color: var(--accent-text);
 }
 .check-pill.warning svg {
-  color: #dfb27a;
+  color: var(--c-dfb27a);
 }
 .pill-button {
   display: inline-grid;
@@ -251,7 +268,7 @@ dialog.preview-panel.has-model {
   transform: scale(0.92);
 }
 .pill-button[aria-pressed="true"] {
-  color: #0e1306;
+  color: var(--gray-11);
   background: var(--accent-text);
 }
 .pill-group {
@@ -266,12 +283,12 @@ dialog.preview-panel.has-model {
   left: -1px;
   top: 9px;
   bottom: 9px;
-  border-left: 1px solid rgb(255 255 255 / 0.1);
+  border-left: 1px solid var(--c-ffffff1a);
 }
 .pill-divider {
   align-self: stretch;
   margin: 7px 4px;
-  border-left: 1px solid rgb(255 255 255 / 0.1);
+  border-left: 1px solid var(--c-ffffff1a);
 }
 .pill-value {
   min-width: 40px;
@@ -311,11 +328,11 @@ dialog.preview-panel.has-model {
   background-color: var(--chrome-hover);
 }
 .pill-select:focus-visible {
-  box-shadow: 0 0 0 2px rgb(118 185 0 / 0.55);
+  box-shadow: 0 0 0 2px var(--c-a2a2a28c);
 }
 .pill-select option {
-  background: #222;
-  color: #eee;
+  background: var(--gray-22);
+  color: var(--gray-ee);
 }
 
 /* Bottom bar */
@@ -374,13 +391,13 @@ dialog.preview-panel.has-model {
   background: linear-gradient(
     to right,
     var(--accent-text) var(--fill, 0%),
-    rgb(255 255 255 / 0.16) var(--fill, 0%)
+    var(--c-ffffff29) var(--fill, 0%)
   );
 }
 .model-studio input[type="range"]::-moz-range-track {
   height: 3px;
   border-radius: 3px;
-  background: rgb(255 255 255 / 0.16);
+  background: var(--c-ffffff29);
 }
 .model-studio input[type="range"]::-moz-range-progress {
   height: 3px;
@@ -394,8 +411,8 @@ dialog.preview-panel.has-model {
   margin-top: -5px;
   border: 0;
   border-radius: 50%;
-  background: #f4f4f4;
-  box-shadow: 0 1px 4px rgb(0 0 0 / 0.5);
+  background: var(--gray-f4);
+  box-shadow: 0 1px 4px var(--c-00000080);
   transition: transform 0.15s var(--ease-out);
 }
 .model-studio input[type="range"]::-moz-range-thumb {
@@ -403,7 +420,7 @@ dialog.preview-panel.has-model {
   height: 13px;
   border: 0;
   border-radius: 50%;
-  background: #f4f4f4;
+  background: var(--gray-f4);
 }
 .model-studio input[type="range"]:hover::-webkit-slider-thumb,
 .model-studio input[type="range"]:active::-webkit-slider-thumb {
@@ -413,7 +430,7 @@ dialog.preview-panel.has-model {
   outline: 0;
 }
 .model-studio input[type="range"]:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 3px rgb(118 185 0 / 0.55);
+  box-shadow: 0 0 0 3px var(--c-a2a2a28c);
 }
 .model-studio input[type="range"]:disabled {
   opacity: 0.35;
@@ -440,10 +457,10 @@ dialog.preview-panel.has-model {
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid rgb(255 255 255 / 0.14);
+  border: 1px solid var(--c-ffffff24);
   border-radius: 6px;
-  background: linear-gradient(160deg, #4a4a4a, #363636);
-  color: rgb(255 255 255 / 0.72);
+  background: linear-gradient(160deg, var(--gray-4a), var(--gray-36));
+  color: var(--c-ffffffb8);
   font-size: 8px;
   font-weight: 600;
   letter-spacing: 0.9px;
@@ -455,7 +472,7 @@ dialog.preview-panel.has-model {
     color 0.15s;
 }
 .view-cube-face:hover {
-  background: linear-gradient(160deg, #6b8a3a, #4f6a28);
+  background: linear-gradient(160deg, #6b8a3a, var(--gray-60));
   color: #fff;
 }
 .view-cube-face[aria-pressed="true"] {
@@ -533,7 +550,7 @@ dialog.preview-panel.has-model {
 .viewer-card section + section {
   margin-top: 16px;
   padding-top: 14px;
-  border-top: 1px solid rgb(255 255 255 / 0.07);
+  border-top: 1px solid var(--c-ffffff12);
 }
 .validation-summary ul {
   margin: 0;
@@ -575,7 +592,7 @@ dialog.preview-panel.has-model {
   background: var(--chrome-hover);
 }
 .viewer-card .part-row.is-selected {
-  background: rgb(166 204 112 / 0.12);
+  background: var(--c-bdbdbd1f);
 }
 .viewer-card .part-select {
   flex: 1;
@@ -592,7 +609,7 @@ dialog.preview-panel.has-model {
   font-size: 12.5px;
 }
 .viewer-card .part-row.is-selected .part-select {
-  color: #e3f2cc;
+  color: var(--gray-eb);
 }
 .part-swatch {
   flex-shrink: 0;
@@ -600,7 +617,7 @@ dialog.preview-panel.has-model {
   height: 9px;
   border-radius: 3px;
   background: var(--swatch);
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.2);
+  box-shadow: inset 0 0 0 1px var(--c-00000033);
 }
 .part-visibility {
   position: relative;
@@ -625,7 +642,7 @@ dialog.preview-panel.has-model {
   cursor: pointer;
 }
 .part-visibility:has(input:focus-visible) {
-  box-shadow: 0 0 0 2px rgb(118 185 0 / 0.55);
+  box-shadow: 0 0 0 2px var(--c-a2a2a28c);
 }
 .part-visibility:has(input:disabled) {
   opacity: 0.35;
@@ -654,7 +671,7 @@ dialog.preview-panel.has-model {
   font-size: 15px;
   font-weight: 550;
   letter-spacing: -0.2px;
-  color: #f2f2f2;
+  color: var(--gray-f2);
   text-transform: capitalize;
 }
 .viewer-card .component-size {
@@ -668,7 +685,7 @@ dialog.preview-panel.has-model {
   gap: 3px;
   padding: 8px 10px;
   border-radius: 10px;
-  background: rgb(255 255 255 / 0.045);
+  background: var(--c-ffffff0b);
 }
 .viewer-card .component-size dt {
   font-size: 9.5px;
@@ -723,7 +740,7 @@ dialog.preview-panel.has-model {
   gap: 2px;
   padding: 3px;
   border-radius: 999px;
-  background: rgb(0 0 0 / 0.28);
+  background: var(--c-00000047);
 }
 .viewer-card .component-actions button {
   justify-content: center;
@@ -740,12 +757,12 @@ dialog.preview-panel.has-model {
     color 0.15s;
 }
 .viewer-card .component-actions button:hover {
-  background: rgb(255 255 255 / 0.08);
+  background: var(--c-ffffff14);
   color: var(--chrome-text);
 }
 .viewer-card .component-actions button[aria-pressed="true"] {
-  background: rgb(166 204 112 / 0.18);
-  color: #e3f2cc;
+  background: var(--c-bdbdbd2e);
+  color: var(--gray-eb);
 }
 .viewer-card .component-revise {
   display: flex;
@@ -753,7 +770,7 @@ dialog.preview-panel.has-model {
   gap: 8px;
   margin: 2px 0 0;
   padding-top: 14px;
-  border-top: 1px solid rgb(255 255 255 / 0.07);
+  border-top: 1px solid var(--c-ffffff12);
 }
 .component-revise-title {
   font-size: 9px;
@@ -776,12 +793,12 @@ dialog.preview-panel.has-model {
   padding: 8px 10px;
   border: 0;
   border-radius: 10px;
-  background: rgb(255 255 255 / 0.04);
+  background: var(--c-ffffff0a);
   text-align: left;
   transition: background-color 0.15s;
 }
 .viewer-card .quick-changes button:hover {
-  background: rgb(255 255 255 / 0.08);
+  background: var(--c-ffffff14);
 }
 .viewer-card .quick-changes button:focus-visible {
   outline: 1px solid var(--green);
@@ -800,7 +817,7 @@ dialog.preview-panel.has-model {
   margin-right: 4px;
   font-style: normal;
   font-weight: 500;
-  color: #a6cc70;
+  color: var(--gray-bd);
 }
 /* Pinned to the card's bottom edge so Send stays reachable while the
    suggestions scroll underneath. */
@@ -809,16 +826,16 @@ dialog.preview-panel.has-model {
   bottom: 0;
   z-index: 1;
   margin-top: 4px;
-  border: 1px solid rgb(255 255 255 / 0.1);
+  border: 1px solid var(--c-ffffff1a);
   border-radius: 12px;
-  background: #161616;
+  background: var(--gray-16);
   box-shadow:
-    0 -10px 14px 2px rgb(30 30 30 / 0.94),
-    0 15px 0 1px rgb(30 30 30);
+    0 -10px 14px 2px var(--c-1e1e1ef0),
+    0 15px 0 1px var(--gray-1e);
   transition: border-color 0.15s;
 }
 .component-composer:focus-within {
-  border-color: rgb(118 185 0 / 0.7);
+  border-color: var(--c-a2a2a2b3);
 }
 .viewer-card .component-composer textarea {
   display: block;
@@ -869,7 +886,7 @@ dialog.preview-panel.has-model {
   padding: 3px;
   border: 0;
   border-radius: 999px;
-  background: rgb(0 0 0 / 0.28);
+  background: var(--c-00000047);
 }
 .viewer-card .segmented button {
   border-radius: 999px;
@@ -880,7 +897,7 @@ dialog.preview-panel.has-model {
     color 0.18s;
 }
 .viewer-card .segmented button[aria-pressed="true"] {
-  background: rgb(255 255 255 / 0.1);
+  background: var(--c-ffffff1a);
   color: var(--chrome-text);
 }
 .viewer-card .inline-check {
@@ -906,7 +923,7 @@ dialog.preview-panel.has-model {
   background: var(--chrome-hover);
 }
 .viewer-card .assembly-steps li.current {
-  background: rgb(166 204 112 / 0.12);
+  background: var(--c-bdbdbd1f);
 }
 .viewer-card .assembly-steps .step-name {
   padding: 6px;
@@ -937,16 +954,16 @@ dialog.preview-panel.has-model {
   min-height: 32px;
   border: 0;
   border-radius: 999px;
-  background: rgb(166 204 112 / 0.14);
-  color: #dcefc2;
+  background: var(--c-bdbdbd24);
+  color: var(--gray-e7);
   transition: background-color 0.15s;
 }
 .viewer-card .record-button:hover:not(:disabled) {
-  background: rgb(166 204 112 / 0.22);
+  background: var(--c-bdbdbd38);
 }
 .viewer-card .record-button.is-recording {
-  background: rgb(229 83 75 / 0.18);
-  color: #f5b4ae;
+  background: var(--c-e5534b2e);
+  color: var(--c-f5b4ae);
 }
 .viewer-card .assembly-sequence small {
   font-size: 11px;
@@ -1023,14 +1040,14 @@ dialog.preview-panel.has-model {
    the right that keeps measurements, checks and the agent's notes in view.
    --------------------------------------------------------------------------- */
 .model-studio.bench {
-  --bench-ink: #a6cc70;
-  --bench-line: rgb(166 204 112 / 0.07);
-  --bench-line-strong: rgb(166 204 112 / 0.13);
+  --bench-ink: var(--stage-ink);
+  --bench-line: var(--stage-line);
+  --bench-line-strong: var(--stage-line-strong);
   --bench-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 .preview-panel .model-studio.bench .bench-stage {
   min-height: 420px;
-  /* Millimetre-paper grid over a faintly green slate. */
+  /* Millimetre-paper grid over a pale-black stage. */
   background:
     linear-gradient(var(--bench-line) 1px, transparent 1px) 0 0 / 22px 22px,
     linear-gradient(90deg, var(--bench-line) 1px, transparent 1px) 0 0 / 22px
@@ -1039,14 +1056,18 @@ dialog.preview-panel.has-model {
       110px,
     linear-gradient(90deg, var(--bench-line-strong) 1px, transparent 1px) 0 0 /
       110px 110px,
-    radial-gradient(95% 75% at 50% 42%, #1c2119 0%, #131611 68%, #0f110e 100%);
+    radial-gradient(
+      95% 75% at 50% 42%,
+      var(--stage-bg-center) 0%,
+      var(--stage-bg) 72%
+    );
 }
 .bench-mark {
   position: absolute;
   z-index: 1;
   width: 16px;
   height: 16px;
-  border-color: rgb(166 204 112 / 0.45);
+  border-color: var(--stage-mark);
   border-style: solid;
   border-width: 0;
   pointer-events: none;
@@ -1082,7 +1103,7 @@ dialog.preview-panel.has-model {
   font-family: var(--bench-mono);
   font-size: 10px;
   letter-spacing: 1.2px;
-  color: rgb(166 204 112 / 0.7);
+  color: var(--stage-ink-muted);
 }
 .bench-envelope {
   position: absolute;
@@ -1091,11 +1112,11 @@ dialog.preview-panel.has-model {
   z-index: 1;
   font-family: var(--bench-mono);
   font-size: 12px;
-  color: #d9e6c7;
+  color: var(--stage-ink);
   pointer-events: none;
 }
 .bench-envelope small {
-  color: rgb(217 230 199 / 0.55);
+  color: var(--stage-ink-muted);
 }
 .model-studio.bench .dock-top-right {
   top: 24px;
@@ -1105,9 +1126,9 @@ dialog.preview-panel.has-model {
   display: flex;
   gap: 2px;
   padding: 3px;
-  border: 1px solid #2b3127;
+  border: 1px solid var(--stage-chrome-border);
   border-radius: 8px;
-  background: rgb(17 19 15 / 0.9);
+  background: var(--stage-chrome);
 }
 .bench-tools .pill-button,
 .bench-strip .pill-button {
@@ -1126,18 +1147,22 @@ dialog.preview-panel.has-model {
   gap: 4px;
   min-height: 46px;
   padding: 6px 12px;
-  border-top: 1px solid #262b22;
-  background: rgb(14 16 12 / 0.94);
+  border-top: 1px solid var(--stage-chrome-border);
+  background: var(--stage-chrome);
   color: var(--chrome-text);
 }
+
 .bench-strip .pill-select {
   max-width: 170px;
-  border: 1px solid #2d3329;
+  border: 1px solid var(--gray-31);
   border-radius: 6px;
 }
 .bench-strip .viewer-hint {
+  /* A block, not the default flex box, so long hints end in an ellipsis. */
+  display: block;
   flex: 1;
   min-width: 0;
+
   min-height: 0;
   padding: 0 4px 0 12px;
   overflow: hidden;
@@ -1157,9 +1182,9 @@ dialog.preview-panel.has-model {
   flex-direction: column;
   width: 312px;
   padding: 0;
-  border-left: 1px solid #252525;
+  border-left: 1px solid var(--gray-25);
   border-radius: 0;
-  background: #121212;
+  background: var(--gray-12);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -1174,7 +1199,7 @@ dialog.preview-panel.has-model {
 .bench-inspector > section,
 .bench-inspector > .inspector-focus {
   padding: 16px 18px;
-  border-bottom: 1px solid #222;
+  border-bottom: 1px solid var(--gray-22);
 }
 .viewer-card.bench-inspector section + section {
   margin-top: 0;
@@ -1184,7 +1209,7 @@ dialog.preview-panel.has-model {
 .inspector-focus {
   display: grid;
   gap: 16px;
-  background: #151815;
+  background: var(--gray-17);
 }
 .inspector-status {
   display: inline-flex;
@@ -1194,16 +1219,16 @@ dialog.preview-panel.has-model {
   border-radius: 6px;
   font-size: 11.5px;
   font-weight: 550;
-  color: #b0b0b0;
-  background: #222;
+  color: var(--gray-b0);
+  background: var(--gray-22);
 }
 .inspector-status.is-pass {
-  color: #c7e3a0;
-  background: #222b1a;
+  color: var(--gray-d7);
+  background: var(--gray-28);
 }
 .inspector-status.is-warn {
-  color: #f0c58a;
-  background: #2f2717;
+  color: var(--c-f0c58a);
+  background: var(--c-2f2717);
 }
 .inspector-dims {
   display: grid;
@@ -1213,31 +1238,31 @@ dialog.preview-panel.has-model {
 }
 .inspector-dims div {
   padding: 8px 10px;
-  border: 1px solid #262626;
+  border: 1px solid var(--gray-26);
   border-radius: 8px;
-  background: #171717;
+  background: var(--gray-17);
 }
 .inspector-dims dt {
   font-family: var(--bench-mono);
   font-size: 9.5px;
   letter-spacing: 1px;
-  color: #777;
+  color: var(--gray-77);
 }
 .inspector-dims dd {
   margin: 3px 0 0;
   font-family: var(--bench-mono);
   font-size: 14px;
-  color: #ededed;
+  color: var(--gray-ed);
 }
 .inspector-dims dd small {
   margin-left: 2px;
   font-size: 9.5px;
-  color: #777;
+  color: var(--gray-77);
 }
 .inspector-facts {
   margin: 10px 0 0;
   font-size: 11.5px;
-  color: #8a8a8a;
+  color: var(--gray-8a);
 }
 .viewer-card.bench-inspector h3 {
   display: flex;
@@ -1248,7 +1273,7 @@ dialog.preview-panel.has-model {
   font-weight: 600;
   letter-spacing: 0.8px;
   text-transform: uppercase;
-  color: #7d7d7d;
+  color: var(--gray-7d);
 }
 .inspector-checks {
   display: grid;
@@ -1257,7 +1282,7 @@ dialog.preview-panel.has-model {
   padding: 0;
   list-style: none;
   font-size: 12.5px;
-  color: #d4d4d4;
+  color: var(--gray-d4);
 }
 .inspector-checks li {
   display: flex;
@@ -1268,14 +1293,14 @@ dialog.preview-panel.has-model {
   color: var(--green);
 }
 .inspector-checks li.is-warn svg {
-  color: #e8a64f;
+  color: var(--c-e8a64f);
 }
 .bench-inspector small {
   display: block;
   margin-top: 10px;
   font-size: 10.5px;
   line-height: 1.5;
-  color: #6c6c6c;
+  color: var(--gray-6c);
 }
 .inspector-notes h3 svg {
   color: var(--bench-ink);
@@ -1287,21 +1312,21 @@ dialog.preview-panel.has-model {
   display: block;
   font-size: 12.5px;
   font-weight: 550;
-  color: #e6e6e6;
+  color: var(--gray-e6);
 }
 .inspector-notes p,
 .inspector-notes li {
   margin: 4px 0 0;
   font-size: 12px;
   line-height: 1.6;
-  color: #b9b9b9;
+  color: var(--gray-b9);
 }
 .inspector-notes ul {
   margin: 6px 0 0;
   padding-left: 16px;
 }
 .inspector-notes .inspector-open {
-  color: #d9b77e;
+  color: var(--c-d9b77e);
 }
 .inspector-summary-text {
   display: -webkit-box;
@@ -1326,24 +1351,24 @@ dialog.preview-panel.has-model {
   min-height: 30px;
   margin-top: 10px;
   padding: 0 10px;
-  border: 1px solid #2c2c2c;
+  border: 1px solid var(--gray-2c);
   border-radius: 6px;
   font-size: 12px;
-  color: #cfcfcf;
-  background: #191919;
+  color: var(--gray-cf);
+  background: var(--gray-19);
 }
 .inspector-actions .inspector-toggle {
   margin-top: 0;
 }
 .inspector-toggle:hover {
-  border-color: #3d3d3d;
-  background: #1f1f1f;
+  border-color: var(--gray-3d);
+  background: var(--gray-1f);
 }
 .inspector-toggle[aria-expanded="true"],
 .inspector-toggle[aria-pressed="true"] {
-  border-color: #4a5a36;
-  color: #d9ecbd;
-  background: #1d2419;
+  border-color: var(--gray-53);
+  color: var(--gray-e3);
+  background: var(--gray-21);
 }
 .inspector-toggle[aria-expanded="true"] .pill-chevron {
   transform: rotate(90deg);
@@ -1367,7 +1392,7 @@ dialog.preview-panel.has-model {
     width: auto;
     overflow: visible;
     border-left: 0;
-    border-top: 1px solid #252525;
+    border-top: 1px solid var(--gray-25);
   }
   .bench-strip .viewer-hint {
     display: none;

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowRight,
   BookOpen,
   Box,
   CirclePlay,
@@ -22,6 +21,7 @@ import RulesPage from "./RulesPage.jsx";
 import { fileKind } from "./filePresentation.js";
 import {
   Animated,
+  Clamp,
   Empty,
   ErrorNotice,
   Loading,
@@ -84,12 +84,6 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
       <PageHeading
         title="Chats"
         description="Your ideas, iterations, and finished designs."
-        action={
-          <a className="primary" href="#new">
-            <Plus size={17} />
-            New chat
-          </a>
-        }
       />
       <div className="tabs" aria-label="Chat collections">
         <button
@@ -153,8 +147,8 @@ export function TaskListPage({ openTask, notify, changed, revision }) {
             </option>
           ))}
         </select>
-        <button className="secondary">Search</button>
       </form>
+
       <ResourceState resource={resource} />
       {resource.data && (
         <>
@@ -394,7 +388,6 @@ export function ProjectsPage({ projects, setModal, notify, openProject }) {
                   onClick={() => openProject(p.id)}
                 >
                   Open project
-                  <ArrowRight size={15} />
                 </button>
               </footer>
             </article>
@@ -540,13 +533,32 @@ function RemoteCollection({
                         {row.enabled ? "Enabled" : "Paused"}
                       </span>
                     </header>
-                    <p>{row.prompt}</p>
+                    <Clamp lines={2}>
+                      <p>{row.prompt}</p>
+                    </Clamp>
                     <footer>
-                      <small>
-                        Every {every(row.interval_minutes)}
-                        {!!row.enabled &&
-                          ` · Next: ${new Date(row.next_run_at * 1000).toLocaleString()}`}
-                      </small>
+                      <span className="job-schedule">
+                        <small>
+                          Every {every(row.interval_minutes)}
+                          {!!row.enabled &&
+                            ` · Next: ${new Date(row.next_run_at * 1000).toLocaleString()}`}
+                        </small>
+                        {row.last_task_id && (
+                          <button
+                            className="text-button"
+                            onClick={() => openTask(row.last_task_id)}
+                          >
+                            Latest result
+                            {row.last_task_status && (
+                              <span
+                                className={`job-run-status ${row.last_task_status}`}
+                              >
+                                {statusLabel(row.last_task_status)}
+                              </span>
+                            )}
+                          </button>
+                        )}
+                      </span>
                       <span className="job-actions">
                         <button
                           className="secondary"
@@ -570,36 +582,16 @@ function RemoteCollection({
                         </button>
                       </span>
                     </footer>
-                    {row.last_task_id && (
-                      <button
-                        className="text-button"
-                        onClick={() => openTask(row.last_task_id)}
-                      >
-                        View latest result
-                        {row.last_task_status && (
-                          <span
-                            className={`job-run-status ${row.last_task_status}`}
-                          >
-                            {statusLabel(row.last_task_status)}
-                          </span>
-                        )}
-                        <ArrowRight size={14} />
-                      </button>
-                    )}
                   </>
                 ) : (
                   <>
-                    <span className="card-icon">
-                      <BookOpen size={19} />
-                    </span>
-                    <p>{row.content}</p>
-                    <footer>
+                    <header>
                       <button
-                        className="text-button"
+                        className="text-button memory-source"
                         onClick={() => openTask(row.task_id)}
                       >
-                        {row.title}
-                        <ArrowRight size={14} />
+                        <BookOpen size={15} />
+                        <span>{row.title}</span>
                       </button>
                       <button
                         className="secondary"
@@ -607,7 +599,10 @@ function RemoteCollection({
                       >
                         Forget
                       </button>
-                    </footer>
+                    </header>
+                    <Clamp lines={3}>
+                      <p>{row.content}</p>
+                    </Clamp>
                   </>
                 )}
               </article>

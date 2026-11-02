@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowRight,
   Box,
   Check,
   ChevronDown,
@@ -319,10 +318,7 @@ function FileGroup({ title, taskId, files, allFiles, layout, onOpen, notify }) {
     <section className="file-group">
       {title && (
         <div className="file-group-heading">
-          <a href={`#task=${encodeURIComponent(taskId)}`}>
-            {title}
-            <ArrowRight size={14} />
-          </a>
+          <a href={`#task=${encodeURIComponent(taskId)}`}>{title}</a>
           <span>
             {files.length} {files.length === 1 ? "file" : "files"}
           </span>

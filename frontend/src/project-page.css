@@ -16,15 +16,16 @@
 .project-page-heading h1 {
   overflow-wrap: anywhere;
 }
-.project-page-heading p {
+.project-page-heading .clamp {
   margin-top: 10px;
-  color: #a8a8a8;
+}
+.project-page-heading p {
+  color: var(--gray-a8);
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-line;
-  max-height: 6.4em;
-  overflow: hidden;
 }
+
 .project-page-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
@@ -45,7 +46,7 @@
   margin-left: auto;
   font-size: 11px;
   font-weight: 450;
-  color: #777;
+  color: var(--gray-77);
 }
 .project-side {
   display: flex;
@@ -86,12 +87,12 @@
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #1c1c1c;
+  background: var(--gray-1c);
 }
 .project-memory-list p {
   font-size: 13px;
   line-height: 1.55;
-  color: #cfcfcf;
+  color: var(--gray-cf);
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
@@ -112,8 +113,17 @@
   font-size: 11px;
   min-width: 0;
 }
+.project-memory-list footer .text-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-memory-list footer > span {
+  flex: none;
+}
+
 .project-memory-list footer small {
-  color: #777;
+  color: var(--gray-77);
 }
 .project-file-list {
   list-style: none;
@@ -130,13 +140,13 @@
   gap: 10px;
 }
 .project-file-list a {
-  color: #cfcfcf;
+  color: var(--gray-cf);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .project-file-list small {
-  color: #777;
+  color: var(--gray-77);
   flex-shrink: 0;
 }
 .sidebar-projects {
@@ -152,20 +162,20 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #8f8f8f;
+  color: var(--gray-8f);
   font-size: 12px;
   cursor: pointer;
   text-align: left;
 }
 .sidebar-new-project:hover {
   color: var(--text);
-  background: #1a1a1a;
+  background: var(--gray-1a);
 }
 .sidebar-new-project svg {
   color: var(--accent-text);
 }
 .workspace-location > a {
-  color: #a8a8a8;
+  color: var(--gray-a8);
   white-space: nowrap;
 }
 .workspace-location > a:hover {
@@ -192,19 +202,19 @@
 }
 .sidebar-recents a.sidebar-project-folder {
   gap: 10px;
-  color: #d6d6d6;
+  color: var(--gray-d6);
   font-size: 13px;
   min-height: 32px;
 }
 .sidebar-recents a.sidebar-project-folder svg {
-  color: #a8a8a8;
+  color: var(--gray-a8);
 }
 .sidebar-recents a.sidebar-project-folder.active svg {
   color: var(--green);
 }
 .sidebar-recents a.sidebar-project-chat {
   padding-left: 36px;
-  color: #a2a2a2;
+  color: var(--gray-a2);
   font-size: 12.5px;
 }
 .sidebar-recents a.sidebar-project-chat.active {

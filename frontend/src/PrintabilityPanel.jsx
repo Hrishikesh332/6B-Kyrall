@@ -1,11 +1,5 @@
 import { useState } from "react";
-import {
-  AlertTriangle,
-  Check,
-  CircleAlert,
-  ExternalLink,
-  Printer,
-} from "lucide-react";
+import { AlertTriangle, Check, CircleAlert, Printer } from "lucide-react";
 import { api } from "./lib.js";
 import { useResource } from "./hooks.js";
 
@@ -191,7 +185,6 @@ function BambuSliceRun({ context }) {
               aria-busy={opening || undefined}
               onClick={open}
             >
-              <ExternalLink size={13} />{" "}
               {opening ? "Opening…" : "Open in Bambu Studio"}
             </button>
           )}

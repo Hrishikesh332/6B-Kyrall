@@ -18,10 +18,10 @@
 .sample-provenance {
   margin-top: 24px;
   padding-top: 18px;
-  border-top: 1px solid #333;
+  border-top: 1px solid var(--gray-33);
   font-size: 11px;
   line-height: 1.7;
-  color: #aaa;
+  color: var(--gray-aa);
 }
 .sample-provenance > p {
   margin-bottom: 12px;

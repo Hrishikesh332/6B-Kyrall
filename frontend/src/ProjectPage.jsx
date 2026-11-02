@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  ArrowRight,
   BookOpen,
   File,
   Folder,
@@ -13,6 +12,7 @@ import { api, date, size } from "./lib.js";
 import { useResource } from "./hooks.js";
 import {
   Animated,
+  Clamp,
   Composer,
   Empty,
   ErrorNotice,
@@ -56,7 +56,11 @@ export default function ProjectPage({
         <div>
           <div className="eyebrow">PROJECT</div>
           <h1>{project.name}</h1>
-          {project.brief && <p>{project.brief}</p>}
+          {project.brief && (
+            <Clamp lines={3}>
+              <p>{project.brief}</p>
+            </Clamp>
+          )}
         </div>
         <button
           className="secondary"
@@ -224,15 +228,17 @@ function ProjectMemory({ project, openTask, setModal, notify, changed }) {
               </form>
             ) : (
               <>
-                <p>{m.content}</p>
+                <Clamp lines={5}>
+                  <p>{m.content}</p>
+                </Clamp>
                 <footer>
                   {m.task_id ? (
                     <button
                       className="text-button"
                       onClick={() => openTask(m.task_id)}
+                      title={m.title}
                     >
-                      {m.title}
-                      <ArrowRight size={13} />
+                      <span>{m.title}</span>
                     </button>
                   ) : (
                     <small>Your note · {date(m.created_at)}</small>

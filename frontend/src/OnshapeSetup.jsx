@@ -1,11 +1,8 @@
 import { useEffect, useState } from "react";
 import {
-  ArrowLeft,
-  ArrowUpRight,
   Box,
   Boxes,
   Check,
-  ExternalLink,
   FolderOpen,
   Import,
   KeyRound,
@@ -179,7 +176,7 @@ function ConnectForm({ hosted, onConnected, onClose }) {
             target="_blank"
             rel="noreferrer"
           >
-            Open API keys <ArrowUpRight size={12} />
+            Open API keys
           </a>
         </li>
         <li>Paste the access key and secret key below.</li>
@@ -328,7 +325,7 @@ function Connected({ status, onBrowse, onStatus, onChanged, onClose, notify }) {
           target="_blank"
           rel="noreferrer"
         >
-          Open Onshape <ExternalLink size={14} />
+          Open Onshape
         </a>
         {!fromEnv && (
           <ConfirmButton
@@ -443,12 +440,12 @@ function OnshapeBrowser({ status, taskId, onBack, onImported, notify }) {
     return (
       <div className="onshape-browser">
         <button className="text-button" onClick={() => setDoc(null)}>
-          <ArrowLeft size={14} /> All documents
+          Back to documents
         </button>
         <div className="onshape-doc-heading">
           <h3>{doc.name}</h3>
           <a href={doc.url} target="_blank" rel="noreferrer">
-            Open in Onshape <ExternalLink size={12} />
+            Open in Onshape
           </a>
         </div>
         {error && <ErrorNotice error={error} />}
@@ -536,7 +533,7 @@ function OnshapeBrowser({ status, taskId, onBack, onImported, notify }) {
     <div className="onshape-browser">
       {onBack && (
         <button className="text-button" onClick={onBack}>
-          <ArrowLeft size={14} /> Connection
+          Back to connection
         </button>
       )}
       <DocumentPicker status={status} onPick={setDoc} />
@@ -758,7 +755,7 @@ export function OnshapeExport({
                 target="_blank"
                 rel="noreferrer"
               >
-                Open in Onshape <ExternalLink size={14} />
+                Open in Onshape
               </a>
             </div>
           </div>

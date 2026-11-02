@@ -1,5 +1,9 @@
 import "@fontsource-variable/inter";
+import "./theme.css";
 import "./styles.css";
+import { startAppearance } from "./src/appearance.js";
+
+startAppearance();
 const host = document.querySelector("#api-reference");
 const esc = (s) =>
   String(s ?? "").replace(

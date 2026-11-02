@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Box, Download, ExternalLink, X } from "lucide-react";
+import { Box, Download, X } from "lucide-react";
 import { api, size } from "./lib.js";
 import { useResource } from "./hooks.js";
 import { ModelThumbnail } from "./FileLibrary.jsx";
@@ -129,7 +129,7 @@ export function SamplePreview({ sample, onClose }) {
           <div>
             <span>{sample.author}</span>
             <a href={sample.source_url} target="_blank" rel="noreferrer">
-              Khronos source <ExternalLink size={12} />
+              Khronos source
             </a>
             <a href={sample.license_url} target="_blank" rel="noreferrer">
               {sample.license}

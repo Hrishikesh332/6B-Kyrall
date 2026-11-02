@@ -5,9 +5,10 @@ import { resolve } from "node:path";
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Keep the browser's Host so the API's same-origin check sees the page it came from.
     proxy: {
-      "/api": "http://127.0.0.1:8765",
-      "/openapi.json": "http://127.0.0.1:8765",
+      "/api": { target: "http://127.0.0.1:8765", changeOrigin: false },
+      "/openapi.json": { target: "http://127.0.0.1:8765", changeOrigin: false },
     },
   },
   build: {

@@ -3,10 +3,8 @@ import { createAvatar } from "@dicebear/core";
 import { avataaars } from "@dicebear/collection";
 import {
   AlertCircle,
-  ArrowRight,
   BookOpen,
   Box,
-  ChevronRight,
   ChevronDown,
   Component,
   Clock3,
@@ -15,14 +13,16 @@ import {
   Plus,
   ShieldCheck,
   ScrollText,
-  ExternalLink,
   Menu,
+  Monitor,
+  Moon,
   Settings2,
   ListTodo,
   Folder,
   FolderOpen,
   FolderPlus,
   MessageSquare,
+  Sun,
   X,
 } from "lucide-react";
 import { api, date, modeLabel, samples } from "./lib.js";
@@ -51,6 +51,7 @@ import ArtifactPreview from "./ArtifactPreview.jsx";
 import ProjectPage from "./ProjectPage.jsx";
 import SignIn, { GoogleMark } from "./SignIn.jsx";
 import { authConfig, signInWithGoogle, signOut } from "./auth.js";
+import { useAppearance } from "./appearance.js";
 import "./home.css";
 
 const navigation = [
@@ -155,6 +156,42 @@ function TopbarAccount({ auth, notify, boot, openSettings }) {
       <GoogleMark />
       {busy ? "Signing in…" : "Sign in with Google"}
     </button>
+  );
+}
+
+const appearances = [
+  ["dark", "Dark", Moon],
+  ["light", "Light", Sun],
+  ["system", "System", Monitor],
+];
+
+export function AppearancePicker() {
+  const [choice, choose] = useAppearance();
+  return (
+    <div className="settings-row">
+      <div>
+        <strong id="appearance-label">Appearance</strong>
+        <p>How 6B looks in this browser.</p>
+      </div>
+      <div
+        className="appearance-options"
+        role="radiogroup"
+        aria-labelledby="appearance-label"
+      >
+        {appearances.map(([value, label, Icon]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={choice === value}
+            onClick={() => choose(value)}
+          >
+            <Icon size={14} aria-hidden="true" />
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -581,11 +618,6 @@ export default function App() {
           </div>
         </details>
         <div className="sidebar-footer">
-          <a href="/docs" target="_blank" rel="noreferrer">
-            <BookOpen size={16} />
-            Documentation
-            <ExternalLink size={13} />
-          </a>
           <button
             className="workspace-profile"
             onClick={() => {
@@ -628,11 +660,15 @@ export default function App() {
           </button>
           <div className="workspace-location">
             <span>Personal workspace</span>
-            <ChevronRight size={13} />
+            <span className="crumb-separator" aria-hidden="true">
+              /
+            </span>
             {page === "task" && crumbProject && (
               <>
                 <a href={`#project=${crumbProject.id}`}>{crumbProject.name}</a>
-                <ChevronRight size={13} />
+                <span className="crumb-separator" aria-hidden="true">
+                  /
+                </span>
               </>
             )}
             <strong>{title}</strong>
@@ -987,6 +1023,7 @@ function ModalContent({
               </button>
             </div>
           ) : null}
+          <AppearancePicker />
           <p>
             {user
               ? "Your chats are copied to the cloud as each run starts and finishes."
@@ -999,7 +1036,6 @@ function ModalContent({
             rel="noreferrer"
           >
             API documentation
-            <ArrowRight size={14} />
           </a>
         </div>
       </Dialog>

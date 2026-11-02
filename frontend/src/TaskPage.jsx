@@ -39,10 +39,12 @@ import FileLibrary, { FileGallery } from "./FileLibrary.jsx";
 import {
   Animated,
   Badge,
+  Clamp,
   Composer,
   Empty,
   ErrorNotice,
   Loading,
+  MoreMenu,
 } from "./ui.jsx";
 
 export default function TaskPage({
@@ -185,9 +187,6 @@ export default function TaskPage({
   return (
     <div className="task-page page">
       <div className="task-heading">
-        <a className="task-back" href="#tasks">
-          <ArrowLeft size={14} /> All chats
-        </a>
         <div className="task-heading-content">
           <div className="task-heading-copy">
             <div className="task-title-line">
@@ -211,33 +210,6 @@ export default function TaskPage({
             </div>
           </div>
           <div className="task-controls">
-            <button
-              className="secondary"
-              title="Download the full record of this chat: messages, decisions, rules, tool calls and files"
-              disabled={exporting}
-              aria-busy={exporting || undefined}
-              onClick={async () => {
-                setExporting(true);
-                try {
-                  const blob = await (
-                    await api(`/tasks/${id}/session?format=md`, { raw: true })
-                  ).blob();
-                  const url = URL.createObjectURL(blob),
-                    link = document.createElement("a");
-                  link.href = url;
-                  link.download = `${task.title.replace(/[^\w.-]+/g, "_").slice(0, 60)}-session.md`;
-                  link.click();
-                  setTimeout(() => URL.revokeObjectURL(url), 1000);
-                } catch (err) {
-                  notify(err.message, "error");
-                } finally {
-                  setExporting(false);
-                }
-              }}
-            >
-              <Download size={15} />{" "}
-              {exporting ? "Exporting…" : "Export session"}
-            </button>
             {active && (
               <button
                 className="secondary"
@@ -262,24 +234,53 @@ export default function TaskPage({
                 Retry
               </button>
             )}
-            {model &&
-              /\.(step|stp)$/i.test(model.name) &&
-              model.metadata.source !== "onshape" && (
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    setModal({
-                      kind: "onshape-export",
-                      taskId: id,
-                      artifactId: model.id,
-                      name: model.name,
-                      title: task.title,
-                    })
+            {/* Less-used actions wait behind "⋯" so the header stays calm. */}
+            <MoreMenu>
+              <button
+                role="menuitem"
+                title="Download the full record of this chat: messages, decisions, rules, tool calls and files"
+                disabled={exporting}
+                onClick={async () => {
+                  setExporting(true);
+                  try {
+                    const blob = await (
+                      await api(`/tasks/${id}/session?format=md`, { raw: true })
+                    ).blob();
+                    const url = URL.createObjectURL(blob),
+                      link = document.createElement("a");
+                    link.href = url;
+                    link.download = `${task.title.replace(/[^\w.-]+/g, "_").slice(0, 60)}-session.md`;
+                    link.click();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                  } catch (err) {
+                    notify(err.message, "error");
+                  } finally {
+                    setExporting(false);
                   }
-                >
-                  <Upload size={15} /> Send to Onshape
-                </button>
-              )}
+                }}
+              >
+                <Download size={15} />
+                {exporting ? "Exporting…" : "Export session"}
+              </button>
+              {model &&
+                /\.(step|stp)$/i.test(model.name) &&
+                model.metadata.source !== "onshape" && (
+                  <button
+                    role="menuitem"
+                    onClick={() =>
+                      setModal({
+                        kind: "onshape-export",
+                        taskId: id,
+                        artifactId: model.id,
+                        name: model.name,
+                        title: task.title,
+                      })
+                    }
+                  >
+                    <Upload size={15} /> Send to Onshape
+                  </button>
+                )}
+            </MoreMenu>
             {model && (
               <button
                 className="primary"
@@ -439,11 +440,22 @@ export default function TaskPage({
                   </h2>
                 </div>
                 <FileGallery
-                  files={artifacts}
+                  files={previewFiles(artifacts)}
                   allFiles={latestArtifacts(task.artifacts)}
                   onOpen={openArtifact}
                   notify={notify}
                 />
+                {artifacts.length > PREVIEW_FILES && (
+                  <button
+                    className="show-more-files"
+                    onClick={() => {
+                      setTab("files");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                  >
+                    View all {artifacts.length} files
+                  </button>
+                )}
               </div>
             )}
             <TaskRules task={task} notify={notify} />
@@ -546,19 +558,34 @@ export default function TaskPage({
     </div>
   );
 }
+// The conversation previews a few files, the package and STEP models first; the
+// Files tab lists them all.
+const PREVIEW_FILES = 4;
+const previewRank = (a) =>
+  a.metadata.kind === "package" ? 0 : /\.(step|stp)$/i.test(a.name) ? 1 : 2;
+const previewFiles = (files) =>
+  [...files]
+    .sort((a, b) => previewRank(a) - previewRank(b))
+    .slice(0, PREVIEW_FILES);
+
 // Studio revisions carry a scope note for the agent; show the part as a chip.
 const FOCUS =
   /^\[Component focus: ([A-Za-z0-9_]+)\]\n([\s\S]*?)\n\nScope: [\s\S]*$/;
 function UserText({ content }) {
   const focus = FOCUS.exec(content);
-  if (!focus) return <div className="prose plain-text">{content}</div>;
   return (
-    <div className="prose plain-text">
-      <span className="focus-chip">
-        <Box size={12} /> {focus[1].replaceAll("_", " ")}
-      </span>
-      {focus[2]}
-    </div>
+    <Clamp lines={12}>
+      {focus ? (
+        <div className="prose plain-text">
+          <span className="focus-chip">
+            <Box size={12} /> {focus[1].replaceAll("_", " ")}
+          </span>
+          {focus[2]}
+        </div>
+      ) : (
+        <div className="prose plain-text">{content}</div>
+      )}
+    </Clamp>
   );
 }
 function Message({ message: m, task, refresh }) {
@@ -722,7 +749,6 @@ export function Questionnaire({ questionnaire: q, task, refresh }) {
           disabled={busy || task.status !== "awaiting_input"}
         >
           {busy ? "Continuing…" : "Continue"}
-          <ArrowRight size={16} />
         </button>
       </div>
     </form>

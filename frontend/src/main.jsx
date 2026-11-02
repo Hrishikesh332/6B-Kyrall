@@ -1,6 +1,7 @@
 import React, { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource-variable/inter";
+import "../theme.css";
 import "../styles.css";
 import "../workspace.css";
 import "../studio.css";
@@ -8,6 +9,9 @@ import "../library.css";
 import "../trace.css";
 import "../viewer.css";
 import App from "./App.jsx";
+import { startAppearance } from "./appearance.js";
+
+startAppearance();
 
 class ErrorBoundary extends React.Component {
   state = { error: null };

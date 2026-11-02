@@ -7,11 +7,11 @@ import {
   ArchiveRestore,
   Box,
   Check,
-  ChevronRight,
   File,
   FileText,
   Image,
   FileArchive,
+  MoreHorizontal,
   Paperclip,
   Plug,
   Plus,
@@ -32,6 +32,89 @@ export function Animated({ children, className = "", ...props }) {
   return (
     <div ref={parent} className={className} {...props}>
       {children}
+    </div>
+  );
+}
+// A "⋯" button holding less-used actions; children are role="menuitem" buttons.
+// Choosing one, clicking elsewhere or pressing Escape closes it.
+export function MoreMenu({ label = "More actions", children }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e) => {
+      if (!root.current?.contains(e.target)) setOpen(false);
+    };
+    const escape = (e) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  return (
+    <div className="more-menu" ref={root}>
+      <button
+        type="button"
+        className="secondary"
+        aria-label={label}
+        title={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open && (
+        <div
+          className="more-menu-list"
+          role="menu"
+          onClick={() => setOpen(false)}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+// Long text shows its first few lines; "Show more" opens the rest. The toggle appears
+
+// only when the text actually overflows.
+export function Clamp({ lines = 3, className = "", children }) {
+  const body = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    const el = body.current;
+    if (!el || open) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [open, children]);
+  return (
+    <div className={`clamp ${className}`}>
+      <div
+        ref={body}
+        className={`clamp-body${open ? "" : " is-clamped"}${overflows && !open ? " overflows" : ""}`}
+        style={{ "--clamp-lines": lines }}
+      >
+        {children}
+      </div>
+      {(overflows || open) && (
+        <button
+          type="button"
+          className="clamp-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
     </div>
   );
 }
@@ -429,7 +512,6 @@ export function ArtifactCard({ artifact: a, onOpen }) {
       <small>
         {size(a.size)}
         <span>·</span>Version {a.version}
-        <ChevronRight size={15} />
       </small>
     </button>
   );
@@ -467,9 +549,7 @@ export function TaskRows({ tasks, onOpen, onArchive, onRestore }) {
                   <Archive size={16} />
                 )}
               </IconButton>
-            ) : (
-              <ChevronRight size={16} className="muted" />
-            )}
+            ) : null}
           </div>
         ))}
       </Animated>
@@ -525,7 +605,6 @@ export function ArtifactRows({ artifacts, onOpen }) {
                 <span className="file-type">{extension}</span>
                 <span className="file-row-size">{size(file.size)}</span>
                 <span className="file-row-version">v{file.version}</span>
-                <ChevronRight size={15} />
               </button>
             </li>
           );

@@ -1,11 +1,11 @@
 /* Conversation and agent work trace. Quiet, text-first, one type size for all
    work steps so reasoning, tools and checks read as a single consistent list. */
 :root {
-  --trace-text: rgba(255, 255, 255, 0.5);
-  --trace-hover: rgba(255, 255, 255, 0.72);
-  --trace-icon: rgba(255, 255, 255, 0.34);
-  --trace-line: #333333;
-  --trace-warn: #dfb27a;
+  --trace-text: var(--c-ffffff80);
+  --trace-hover: var(--c-ffffffb8);
+  --trace-icon: var(--c-ffffff57);
+  --trace-line: var(--gray-33);
+  --trace-warn: var(--c-dfb27a);
 }
 
 /* Messages: assistant answers sit on the page; user turns are soft bubbles. */
@@ -26,15 +26,15 @@
   padding: 10px 16px;
   font-size: 14px;
   line-height: 1.6;
-  color: #e6e6e6;
-  background: rgba(255, 255, 255, 0.07);
+  color: var(--gray-e6);
+  background: var(--c-ffffff12);
   border: 0;
   border-radius: 18px 18px 6px 18px;
 }
 .conversation .message.assistant .prose {
   font-size: 14px;
   line-height: 1.75;
-  color: #d4d4d4;
+  color: var(--gray-d4);
 }
 .conversation .question-summary {
   margin: 0;
@@ -72,7 +72,7 @@
   transform: rotate(180deg);
 }
 .trace-phase.live > .trace-trigger {
-  color: #e6e6e6;
+  color: var(--gray-e6);
 }
 .trace-phase-title {
   overflow-wrap: anywhere;
@@ -132,7 +132,7 @@
   color: var(--trace-icon);
 }
 .trace-step.running .trace-text {
-  color: #e6e6e6;
+  color: var(--gray-e6);
 }
 .trace-step.failed .trace-text,
 .trace-step.failed .trace-icon {
@@ -175,9 +175,9 @@
     "SF Mono",
     Menlo,
     monospace;
-  color: rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--c-ffffff73);
+  background: var(--c-ffffff06);
+  border: 1px solid var(--c-ffffff0f);
   border-radius: 6px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -200,7 +200,7 @@
 }
 .trace-files button:hover {
   color: var(--text);
-  border-color: #474747;
+  border-color: var(--gray-47);
 }
 
 /* Run summary: a single quiet line instead of a bordered banner. */
@@ -237,7 +237,7 @@
   margin: 0 12px -1px;
   padding: 0;
   font-size: 13px;
-  background: #1c1c1c;
+  background: var(--gray-1c);
   border: 1px solid var(--line);
   border-bottom: 0;
   border-radius: 14px 14px 0 0;
@@ -275,7 +275,7 @@
   color: var(--accent-text);
 }
 .conversation .plan.details li.in_progress {
-  color: #e6e6e6;
+  color: var(--gray-e6);
 }
 .conversation .plan.details + .task-composer {
   margin-top: 0;
@@ -308,10 +308,12 @@
   color: var(--trace-warn);
 }
 .trace-phase-meta {
+  white-space: nowrap;
   margin-left: 4px;
+
   padding: 0 7px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--c-ffffff0d);
   font-size: 11px;
   line-height: 18px;
   color: var(--trace-icon);
@@ -320,7 +322,7 @@
   flex-shrink: 0;
   width: 11px;
   height: 11px;
-  border: 1.5px solid rgba(118, 185, 0, 0.25);
+  border: 1.5px solid var(--c-76b90040);
   border-top-color: var(--green);
   border-radius: 50%;
   animation: trace-spin 0.8s linear infinite;
@@ -335,9 +337,9 @@
   gap: 4px;
   margin: 2px 0 0 21px;
   padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--c-ffffff0f);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--c-ffffff06);
   font-size: 12px;
 }
 .trace-arg {
@@ -364,13 +366,13 @@
   padding: 6px 8px;
   overflow: auto;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--c-00000040);
   font:
     11px/1.55 ui-monospace,
     "SF Mono",
     Menlo,
     monospace;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--c-ffffff99);
   white-space: pre;
 }
 .trace-args-empty {
@@ -391,7 +393,7 @@
 .trace-args.nested {
   margin: 0;
   padding: 6px 8px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--c-ffffff05);
 }
 .trace-arg-list {
   display: grid;

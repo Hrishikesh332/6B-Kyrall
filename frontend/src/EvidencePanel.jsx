@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import {
   Check,
   ChevronRight,
-  ExternalLink,
   CircleAlert,
   LoaderCircle,
   CircleMinus,
@@ -149,7 +148,6 @@ export function SourceCard({ source, taskId, openArtifact }) {
       {url ? (
         <a href={url} target="_blank" rel="noopener noreferrer">
           {new URL(url).hostname}
-          <ExternalLink size={14} />
         </a>
       ) : (
         <strong>Saved reference</strong>
