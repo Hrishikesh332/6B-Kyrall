@@ -4,15 +4,20 @@ The 6B workspace in the browser: chats that stream a model's work as it happens,
 studio for checking and adjusting designs, and pages for files, integrations, rules and memory.
 It's built with React 19 and Vite.
 
-<img src="../media/6b-studio.gif" alt="The 3D studio: assembled, exploded and pick-and-place views, then the Integrations page" width="860">
+<img src="../media/6b-studio.gif" alt="The 3D studio with the flat-tile twist-to-suction gripper: assembled, exploded, its twist-suction motion study and assembly sequence, then its parts in Assets" width="860">
+
+<sub>The twist-to-suction gripper for the Franka FR3 from one chat: explode, the motion study, the
+assembly sequence, then its parts in Assets.</sub>
 
 <table>
   <tr>
-    <td width="50%"><img src="../media/studio.jpg" alt="3D studio with checks and AI notes beside the model"></td>
-    <td width="50%"><img src="../media/integrations.jpg" alt="Integrations: Claude Code, OpenAI, Onshape, Isaac Sim, Bambu Studio"></td>
+    <td width="33%"><img src="../media/studio.jpg" alt="The gripper assembled in the 3D studio, with checks and AI notes beside it"></td>
+    <td width="33%"><img src="../media/assets.jpg" alt="Assets: the gripper's parts as 3D thumbnails"></td>
+    <td width="33%"><img src="../media/integrations.jpg" alt="Integrations: Claude Code, OpenAI, Onshape, Isaac Sim, Bambu Studio"></td>
   </tr>
   <tr>
     <td align="center"><sub>Studio: checks, measurements, explode, AI notes</sub></td>
+    <td align="center"><sub>Assets: every part and file, previewed</sub></td>
     <td align="center"><sub>Integrations: models, CAD, simulation, printing</sub></td>
   </tr>
 </table>
@@ -41,9 +46,10 @@ Open the URL Vite prints. `/api` and `/openapi.json` proxy to `127.0.0.1:8765`
 
 | Path | What it is |
 |---|---|
-| `src/App.jsx` | Shell: routing, sidebar, sign-in, capabilities, modals |
+| `src/App.jsx` | Shell: routing, sidebar, sign-in, capabilities, modals, workspace settings |
 | `src/TaskPage.jsx`, `src/AgentTrace.jsx` | A chat: live trace, questions, plan approvals, follow-ups |
-| `src/ui.jsx` | Shared pieces, including the composer |
+| `src/RulesPage.jsx`, `src/TaskRules.jsx` | Rules: quick add, search, set switches; a chat's rule checks |
+| `src/ui.jsx` | Shared pieces: the composer, "Show more" text, the "⋯" menu |
 | `src/ModelPicker.jsx` | Model choice and the reasoning-effort slider panel |
 | `src/ArtifactPreview.jsx`, `src/AssemblyStudio.jsx`, `viewer.js` | File previews and the WebGL assembly studio |
 | `src/ParameterPanel.jsx`, `src/VersionCompare.jsx` | Design sliders and version diffs |
@@ -53,7 +59,8 @@ Open the URL Vite prints. `/api` and `/openapi.json` proxy to `127.0.0.1:8765`
 | `src/lib.js` | API client, browser-held connections, formatting helpers |
 | `src/auth.js` | Google sign-in through Firebase, loaded only when the server enables it |
 | `docs.html`, `docs.js` | The `/docs` API reference, generated from OpenAPI |
-| `styles.css`, `workspace.css`, `studio.css`, … | Theme tokens and layouts |
+| `theme.css`, `src/appearance.js` | Colour tokens for dark and light, and the Dark / Light / System setting |
+| `styles.css`, `workspace.css`, `studio.css`, … | Layouts and components |
 
 ## How it talks to the backend
 
@@ -67,9 +74,15 @@ Open the URL Vite prints. `/api` and `/openapi.json` proxy to `127.0.0.1:8765`
 
 ## Design
 
-A charcoal-and-green theme in the style of NVIDIA Brev, with a sidebar-and-workspace layout.
-Color tokens live in `styles.css`. Sidebar, collection and responsive layouts live in
-`workspace.css`. Motion respects `prefers-reduced-motion`.
+Minimal and quiet: neutral surfaces, with the brand green kept for small marks that mean on,
+done or here (switches, passed checks, the active tab, the main button). Red and amber mark
+problems. Plan cards, simulation and 3D stages are black and white, and models sit on a
+pale-black stage (pale grey in light mode). Long text shows a few lines with "Show more", and
+less-used actions wait behind "⋯".
+
+Every colour is a token in `theme.css` with a dark and a light value. Workspace settings picks
+Dark (the default), Light or System, saved per browser. Use a token, or add one with both
+values, rather than a bare colour. Motion respects `prefers-reduced-motion`.
 
 ## Deploy
 

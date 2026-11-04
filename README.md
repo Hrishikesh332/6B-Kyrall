@@ -49,6 +49,9 @@ printed on a Bambu Lab printer and mounted on a Franka FR3 arm.
   values with sliders. Each slider rebuild is a new validated version and needs no model call.
 - **Questions and approvals.** 6B asks one to three questions when a choice matters, and shows a
   plan before it changes an existing design.
+- **Rules you set.** General rules apply to every chat. Rule sets, such as FDM 3D printing or a
+  hackathon brief, can be switched on or off for each chat. Each design is checked rule by rule,
+  and the chat shows which checks passed.
 - **Evidence on record.** Decisions name their basis, such as a fetched datasheet page, a
   measurement or your answer. Files are versioned and hashed.
 - **Real tools.** Import from and send to Onshape, slice in Bambu Studio, plan pick-and-place, and
@@ -57,7 +60,12 @@ printed on a Bambu Lab printer and mounted on a Franka FR3 arm.
   GPT-6.1 Sol or Terra), with a reasoning-effort slider. An offline workshop mode needs no model.
 
 <p align="center">
-  <img src="media/6b-studio.gif" alt="The 3D studio: assembled, exploded and pick-and-place views of the gripper, then Integrations" width="860">
+  <img src="media/6b-studio.gif" alt="The 3D studio with the flat-tile twist-to-suction gripper: assembled, exploded, its twist-suction motion study and assembly sequence, then its parts in Assets" width="860">
+  <br>
+  <sub><b>Twist-to-suction gripper for a flat tile</b>, designed in one chat. The FR3 presses
+  12 TPU friction dots and a sealing ring onto the tile, then twists its flange about 288°. A
+  screw lifts a sealed piston 12 mm and the chamber pulls a vacuum. 8 printable parts, checked
+  for overlaps and print-bed fit.</sub>
 </p>
 
 ## Quick start
